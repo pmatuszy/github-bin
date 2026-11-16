@@ -1,4 +1,6 @@
 #!/bin/bash
+# v. 20261116.083600 - group prompt: [1] preview joins (last 2s + first 2s of next) before merge
+# v. 20261116.083200 - Contour: confident ≤12s; suspect 13–45s; short must not lead long; gap on INPUT line
 # v. 20261116.073500 - group prompt: [e] edit inputs (subset / drop last) before merge
 # v. 20261116.071800 - Contour: bare/_NVenc_/Contour+2 all join by time; drop ~2 GB size band
 # v. 20261116.070800 - Contour: also group renamed Contour+2 by start+duration (no ~2 GB band)
@@ -99,6 +101,13 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.11.16 - v. 0.15.116 - group merge prompt: [1] Preview joins before merging — play last 2s of
+#   clip N then first 2s of clip N+1 in the terminal (per join; back to the merge menu after). Same
+#   on Contour suspect. Defaults via PGM_JOIN_PREVIEW_BEFORE / PGM_JOIN_PREVIEW_AFTER (2s each).
+# 2026.11.16 - v. 0.15.115 - Contour confident stop slack ≤12s (was 45); suspect review 13–45s (was
+#   46–100). Refuse a Contour link when the previous clip is shorter than half the next (short must
+#   not lead into a much longer chapter — quick battery gaps stay separate). Merge INPUT lines show
+#   gap to next on the same line (e.g. gap +25 s (suspect)).
 # 2026.11.16 - v. 0.15.114 - group merge prompt: [e] Edit inputs when a group has 3+ files — pick a
 #   subset (e.g. 1-2 or 1,2) or [l] drop last; then re-show the trimmed group and ask again. Same on
 #   Contour suspect review. Dropped files stay on disk unmerged.
@@ -359,10 +368,12 @@ Merge behaviour:
     YYYYMMDD_HHMMSS_NVenc_….mp4, and rename.sh Contour+2
     (YYYYMMDD_HHMMSS_-_-_Contour+2 / legacy Contour_2). File size is not used
     (only a 10 MiB floor) — Contour chapters often differ a lot after re-encode.
-    Contour stop slack: next start from 30s early to 45s after the previous end
-    (confident). Gaps of 46–100s are Contour *suspect* review candidates (default
-    Skip). Contour groups merge with ffmpeg concat (-c copy), not mp4_merge.
-    Output: YYYYMMDD_HHMMSS_Contour_concat_parts_01-NN.mp4.
+    Contour stop slack: next start from 30s early to 12s after the previous end
+    (confident). Gaps of 13–45s are Contour *suspect* review candidates (default
+    Skip). A shorter clip does not chain into one at least twice as long (short
+    must not lead a much longer chapter). Merge INPUT lines show the gap to the
+    next file on the same line. Contour groups merge with ffmpeg concat (-c copy),
+    not mp4_merge. Output: YYYYMMDD_HHMMSS_Contour_concat_parts_01-NN.mp4.
   - Also groups 70mai-style clips NOYYYYMMDD-HHMMSS-NNNNNNX.MP4 and the same
     name starting with EV (same camera letter) into a continuous journey: ordered
     by filename time, sequence number increases by 1, and the filename start times
@@ -388,11 +399,13 @@ Merge behaviour:
     The merged file and that .gpx get the first chapter's creation time and file time.
     If the merged file has no location, the first point of that .gpx is stored in it.
   - Shows each multi-part group (with file sizes) and asks whether to merge
-    (single-key Y/N/A/M/E/Q, no Enter — like rename.sh). [Y] merges this group
+    (single-key Y/N/A/M/E/1/Q, no Enter — like rename.sh). [Y] merges this group
     (default); [m] merges all remaining groups (asks output date/time for each first).
-    [e] (groups with 3+ files) edits the suggestion: keep a subset by number
-    (e.g. 1-2) or drop the last file, then asks again for the trimmed group.
-    Contour suspect review offers the same [e] (default remains Skip).
+    [1] previews each join in the terminal (last 2s of clip N, then first 2s of
+    N+1) then returns to this prompt. [e] (groups with 3+ files) edits the
+    suggestion: keep a subset by number (e.g. 1-2) or drop the last file, then
+    asks again for the trimmed group. Contour suspect review offers [1] and [e]
+    (default remains Skip).
     Files in a group, and the groups themselves, are ordered oldest to newest
     (filename YYYYMMDD_HHMMSS when present, otherwise filesystem mtime) before that
     prompt. After the input and output lists, a boxed summary shows how many files
@@ -461,6 +474,8 @@ Environment:
   PGM_SEAM_PREVIEW_AFTER  Seconds after each merge point in terminal preview (default: 1).
   PGM_SEAM_PREVIEW_WIDTH  Terminal tct width for seam preview (default: 100; empty = autodetect).
   PGM_SEAM_PREVIEW_HEIGHT Terminal tct height for seam preview (default: 40; empty = autodetect).
+  PGM_JOIN_PREVIEW_BEFORE Seconds from the end of clip N in pre-merge [1] join preview (default: 2).
+  PGM_JOIN_PREVIEW_AFTER  Seconds from the start of clip N+1 in pre-merge [1] join preview (default: 2).
   RENAME_EXIFTOOL / EXIFLOC / PGM_EXIFTOOL
                           exiftool for GoPro timelapse detection on _part_XX chains (same
                           default path as rename.sh when unset).
@@ -487,11 +502,15 @@ Environment:
                           File size is otherwise ignored (bare / _NVenc_ / Contour+2).
   PGM_CONTOUR_TIME_TOLERANCE_SEC / PGM_CONTOUR_TIME_MAX_STOP_SEC
                           Contour confident chain: next start vs prev start + duration
-                          may be this many seconds early (default 30) or late (default 45).
+                          may be this many seconds early (default 30) or late (default 12).
   PGM_CONTOUR_TIME_SUSPECT_MAX_STOP_SEC
                           Contour suspect review window upper bound in seconds after
-                          expected chapter end (default 100). Gaps from
+                          expected chapter end (default 45). Gaps from
                           MAX_STOP+1 … this value are listed for manual check.
+  PGM_CONTOUR_SHORT_LEAD_RATIO
+                          Refuse Contour chain when prev duration < ratio × next
+                          duration (default 0.5). Stops a short clip leading into a
+                          much longer chapter (e.g. after a quick battery change).
   PGM_DASHCAM_MAX_GAP_SEC Max seconds between 70mai clip start times to stay in one
                           journey (default: 90). Gaps above this start a new group.
   PGM_DASHCAM_SHORT_HOLE_SEC
@@ -1156,6 +1175,8 @@ MERGE_TEMP_FOR_RUN=""
 MERGE_IN_PLACE_FOR_RUN=0
 # 1 when seam preview stays off for the rest of this run.
 SEAM_PREVIEW_SKIP_RUN=0
+# 1 when pre-merge join preview ([1]) stays off for the rest of this run.
+JOIN_PREVIEW_SKIP_RUN=0
 # 1 when input chapter files stay for the rest of this run.
 KEEP_INPUTS_FOR_RUN=0
 # 1 when groups that are already merged are not asked about again this run.
@@ -2039,6 +2060,151 @@ prompt_seam_terminal_previews() {
   return 0
 }
 
+# Play last BEFORE seconds of left, then first AFTER seconds of right (pre-merge [1]).
+play_pre_merge_join_preview_once() {
+  local player="$1" left="$2" right="$3" join_num="$4" total_joins="$5" ord="$6"
+  local before after left_dur right_dur left_start left_len right_len
+  local preview_w preview_h gap_note=""
+  local -a player_args=()
+
+  before="${PGM_JOIN_PREVIEW_BEFORE:-2}"
+  after="${PGM_JOIN_PREVIEW_AFTER:-2}"
+  [[ "$before" =~ ^[0-9]+([.][0-9]+)?$ ]] || before=2
+  [[ "$after" =~ ^[0-9]+([.][0-9]+)?$ ]] || after=2
+  left_dur=$(ffprobe_duration_seconds "$left" 2>/dev/null) || left_dur=""
+  right_dur=$(ffprobe_duration_seconds "$right" 2>/dev/null) || right_dur=""
+  if [[ -z "$left_dur" || -z "$right_dur" ]]; then
+    echo "$(pgm_ts) Cannot read duration for join preview." >&2
+    return 1
+  fi
+  left_start=$(awk -v d="$left_dur" -v b="$before" 'BEGIN {
+    if (d + 0 <= b + 0) printf "0"; else printf "%.3f", d - b
+  }')
+  left_len=$(awk -v d="$left_dur" -v b="$before" 'BEGIN {
+    if (d + 0 <= b + 0) printf "%.3f", d; else printf "%.3f", b
+  }')
+  right_len=$(awk -v d="$right_dur" -v a="$after" 'BEGIN {
+    if (d + 0 <= a + 0) printf "%.3f", d; else printf "%.3f", a
+  }')
+  gap_note=$(pgm_format_gap_to_next_note "$left" "$right" 2>/dev/null) || gap_note=""
+  [[ -n "$ord" ]] || ord="$(pgm_ordinal_seam_label "$join_num")"
+  preview_w="${PGM_SEAM_PREVIEW_WIDTH-100}"
+  preview_h="${PGM_SEAM_PREVIEW_HEIGHT-40}"
+
+  echo
+  echo "Playing ${ord} join (${join_num} of ${total_joins}) — inputs (not merged yet)"
+  echo "  ${left##*/} | ${right##*/}"
+  [[ -n "$gap_note" ]] && echo "  ${gap_note}"
+  echo "  End of left: last ${left_len}s; start of right: first ${right_len}s."
+
+  player_args=( --no-countdown )
+  if [[ -n "$preview_w" && -n "$preview_h" ]]; then
+    player_args+=( --no-autodetect -w "$preview_w" -H "$preview_h" )
+    echo "  Preview size: ${preview_w} x ${preview_h} terminal cells."
+  fi
+
+  echo "  → ${left##*/} (end)"
+  "${player}" "${player_args[@]}" --start "$left_start" --length "$left_len" "$left" || true
+  echo "  → ${right##*/} (start)"
+  "${player}" "${player_args[@]}" --start 0 --length "$right_len" "$right" || true
+}
+
+# Pre-merge [1]: preview each join (end of N + start of N+1). Return 2 on quit.
+prompt_pre_merge_join_previews() {
+  local -a files=("$@")
+  local player i choice join_num total_joins ord gap_note skip_rest=0
+  local before after
+
+  if (( JOIN_PREVIEW_SKIP_RUN )); then
+    echo "$(pgm_ts) Join preview off for the rest of this run."
+    return 0
+  fi
+  if (( DO_YES )) || (( ! script_is_run_interactively )); then
+    return 0
+  fi
+  (( ${#files[@]} >= 2 )) || {
+    echo "$(pgm_ts) Need at least 2 files to preview joins."
+    return 0
+  }
+  if ! player=$(find_video_pgm_play_terminal); then
+    echo "$(pgm_ts) video-pgm-play-terminal.sh not found — join preview skipped."
+    echo "$(pgm_ts) Install it to /root/bin or set VIDEO_PGM_PLAY_TERMINAL_BIN."
+    return 0
+  fi
+
+  before="${PGM_JOIN_PREVIEW_BEFORE:-2}"
+  after="${PGM_JOIN_PREVIEW_AFTER:-2}"
+  total_joins=$(( ${#files[@]} - 1 ))
+  echo
+  echo "Terminal join preview (before merge): ${player}"
+  echo "Each join: last ${before}s of clip N, then first ${after}s of clip N+1."
+  echo
+
+  for (( i = 0; i < total_joins; i++ )); do
+    join_num=$(( i + 1 ))
+    ord="$(pgm_ordinal_seam_label "$join_num")"
+    gap_note=$(pgm_format_gap_to_next_note "${files[i]}" "${files[i + 1]}" 2>/dev/null) || gap_note=""
+
+    echo "--- ${ord} join (${join_num} of ${total_joins}) ---"
+    echo "  ${files[i]##*/} | ${files[i + 1]##*/}"
+    [[ -n "$gap_note" ]] && echo "  ${gap_note}"
+    echo "  [Y] Play this join (${before}s end + ${after}s start) (default)"
+    echo "  [n] Skip this join"
+    echo "  [a] Skip all remaining joins"
+    echo "  [s] Never preview joins for the rest of this run"
+    echo "  [q] Quit"
+    pgm_read_key_choice "Play ${ord} join in terminal? [Y/n/a/s/q]: " y "ynasq"
+    choice="$REPLY"
+    case "$choice" in
+      y)
+        while true; do
+          play_pre_merge_join_preview_once "$player" \
+            "${files[i]}" "${files[i + 1]}" "$join_num" "$total_joins" "$ord"
+          echo "  [y] Repeat ${ord} join preview"
+          echo "  [N] Continue (default)"
+          echo "  [a] Skip all remaining joins"
+          echo "  [s] Never preview joins for the rest of this run"
+          echo "  [q] Quit"
+          pgm_read_key_choice "Repeat ${ord} join preview? [y/N/a/s/q]: " n "ynasq"
+          choice="$REPLY"
+          case "$choice" in
+            y) continue ;;
+            n) break ;;
+            a)
+              echo "$(pgm_ts) Skipping remaining joins."
+              skip_rest=1
+              break
+              ;;
+            s)
+              JOIN_PREVIEW_SKIP_RUN=1
+              echo "$(pgm_ts) Join preview off for the rest of this run."
+              skip_rest=1
+              break
+              ;;
+            q) return 2 ;;
+          esac
+        done
+        ;;
+      n) ;;
+      a)
+        echo "$(pgm_ts) Skipping remaining joins."
+        skip_rest=1
+        ;;
+      s)
+        JOIN_PREVIEW_SKIP_RUN=1
+        echo "$(pgm_ts) Join preview off for the rest of this run."
+        skip_rest=1
+        ;;
+      q)
+        return 2
+        ;;
+    esac
+    (( skip_rest )) && break
+  done
+  echo
+  return 0
+}
+
 # One line: part label (if any), basename, size (no trailing newline).
 chapter_file_summary_line() {
   local f="$1"
@@ -2095,9 +2261,10 @@ pgm_effective_line_width() {
   fi
 }
 
+# Optional $3 = gap suffix already formatted (e.g. "gap +25 s (confident)").
 pgm_io_input_line() {
-  local part_lbl="$1" f="$2"
-  local base="${f##*/}" sz dur dur_disp size_s line width
+  local part_lbl="$1" f="$2" gap_note="${3:-}"
+  local base="${f##*/}" sz dur dur_disp size_s line width gap_disp=""
   sz=$(file_size_bytes "$f")
   size_s="$(format_bytes_human_aligned "$sz")"
   if dur=$(ffprobe_duration_seconds "$f" 2>/dev/null) && [[ -n "$dur" ]]; then
@@ -2105,14 +2272,67 @@ pgm_io_input_line() {
   else
     dur_disp="—"
   fi
-  printf -v line '  %-*s %s  %s  %s' "$PGM_IO_PART_W" "$part_lbl" "$base" "$size_s" "$dur_disp"
+  [[ -n "$gap_note" ]] && gap_disp="  ${gap_note}"
+  printf -v line '  %-*s %s  %s  %s%s' "$PGM_IO_PART_W" "$part_lbl" "$base" "$size_s" "$dur_disp" "$gap_disp"
   width="$(pgm_effective_line_width)"
   if (( ${#line} <= width )); then
     printf '%s\n' "$line"
     return 0
   fi
   printf '  %-*s %s\n' "$PGM_IO_PART_W" "$part_lbl" "$base"
-  printf '  %-*s %s  %s\n' "$PGM_IO_PART_W" "" "$size_s" "$dur_disp"
+  printf '  %-*s %s  %s%s\n' "$PGM_IO_PART_W" "" "$size_s" "$dur_disp" "$gap_disp"
+}
+
+# Seconds from prev end (start+duration) to next start. Prints the integer delta.
+pgm_inter_chapter_gap_seconds() {
+  local prev_f="$1" next_f="$2"
+  local prev_epoch next_epoch dur expected delta
+  if delta=$(contour_chapter_time_delta "$prev_f" "$next_f" 2>/dev/null); then
+    printf '%s\n' "$delta"
+    return 0
+  fi
+  prev_epoch="$(pgm_hybrid_start_epoch "$prev_f" 2>/dev/null)" || return 1
+  next_epoch="$(pgm_hybrid_start_epoch "$next_f" 2>/dev/null)" || return 1
+  (( next_epoch >= prev_epoch )) || return 1
+  dur=$(ffprobe_duration_seconds "$prev_f" 2>/dev/null) || dur=""
+  [[ -n "$dur" ]] || return 1
+  expected=$(awk -v p="$prev_epoch" -v d="$dur" 'BEGIN{printf "%d", p+d+0.5}')
+  printf '%d\n' "$(( next_epoch - expected ))"
+}
+
+# One-line gap annotation for INPUT lists. Empty when gap cannot be computed.
+pgm_format_gap_to_next_note() {
+  local prev_f="$1" next_f="$2"
+  local delta band="" signed
+  delta=$(pgm_inter_chapter_gap_seconds "$prev_f" "$next_f" 2>/dev/null) || {
+    printf ''
+    return 1
+  }
+  if (( delta >= 0 )); then
+    signed="+${delta} s"
+  else
+    signed="${delta} s"
+  fi
+  if contour_basename_parse "${prev_f##*/}" 2>/dev/null \
+    && contour_basename_parse "${next_f##*/}" 2>/dev/null; then
+    local tol max_stop suspect_max
+    tol="${PGM_CONTOUR_TIME_TOLERANCE_SEC:-30}"
+    max_stop="${PGM_CONTOUR_TIME_MAX_STOP_SEC:-12}"
+    suspect_max="${PGM_CONTOUR_TIME_SUSPECT_MAX_STOP_SEC:-45}"
+    [[ "$tol" =~ ^[0-9]+$ ]] || tol=30
+    [[ "$max_stop" =~ ^[0-9]+$ ]] || max_stop=12
+    [[ "$suspect_max" =~ ^[0-9]+$ ]] || suspect_max=45
+    if (( delta >= -tol && delta <= max_stop )); then
+      band="confident"
+    elif (( delta > max_stop && delta <= suspect_max )); then
+      band="suspect"
+    fi
+  fi
+  if [[ -n "$band" ]]; then
+    printf 'gap %s (%s)' "$signed" "$band"
+  else
+    printf 'gap %s' "$signed"
+  fi
 }
 
 # INPUT section, then OUTPUT section (narrower than side-by-side layout).
@@ -2121,8 +2341,9 @@ print_merge_group_io_block() {
   shift
   local -a files=("$@")
   local f input_total=0 out_sz=0 input_dur_total=0
-  local base part_lbl dur
+  local base part_lbl dur gap_note
   local input_total_s output_total_s output_note input_dur_s sep line width
+  local i n=${#files[@]}
 
   for f in "${files[@]}"; do
     sz=$(file_size_bytes "$f")
@@ -2148,14 +2369,19 @@ print_merge_group_io_block() {
 
   echo "  INPUT (${#files[@]} parts)"
   printf '  %s\n' "$sep"
-  for f in "${files[@]}"; do
+  for (( i = 0; i < n; i++ )); do
+    f="${files[i]}"
     base="${f##*/}"
     if part_lbl=$(chapter_part_from_basename "$base" 2>/dev/null); then
       part_lbl=$(printf 'part %02d' "$part_lbl")
     else
       part_lbl=""
     fi
-    pgm_io_input_line "$part_lbl" "$f"
+    gap_note=""
+    if (( i + 1 < n )); then
+      gap_note=$(pgm_format_gap_to_next_note "$f" "${files[i + 1]}" 2>/dev/null) || gap_note=""
+    fi
+    pgm_io_input_line "$part_lbl" "$f" "$gap_note"
   done
   if [[ -n "$input_dur_total" ]] && awk -v d="$input_dur_total" 'BEGIN{exit !(d>0)}'; then
     input_dur_s=$(format_duration_display "$input_dur_total")
@@ -3030,10 +3256,12 @@ PGM_SIZE_SPLIT_12G_TIME_MAX_GAP_SEC="${PGM_SIZE_SPLIT_12G_TIME_MAX_GAP_SEC:-2400
 # Contour chainable clips: size only needs a small floor (not a ~2 GB band).
 PGM_CONTOUR_MIN_BYTES="${PGM_CONTOUR_MIN_BYTES:-10485760}"
 # Next start ≈ prev + duration: early by TOLERANCE, late confident by MAX_STOP;
-# MAX_STOP+1 … SUSPECT_MAX_STOP = review candidates (default 46–100s).
+# MAX_STOP+1 … SUSPECT_MAX_STOP = review candidates (default 13–45s).
 PGM_CONTOUR_TIME_TOLERANCE_SEC="${PGM_CONTOUR_TIME_TOLERANCE_SEC:-30}"
-PGM_CONTOUR_TIME_MAX_STOP_SEC="${PGM_CONTOUR_TIME_MAX_STOP_SEC:-45}"
-PGM_CONTOUR_TIME_SUSPECT_MAX_STOP_SEC="${PGM_CONTOUR_TIME_SUSPECT_MAX_STOP_SEC:-100}"
+PGM_CONTOUR_TIME_MAX_STOP_SEC="${PGM_CONTOUR_TIME_MAX_STOP_SEC:-12}"
+PGM_CONTOUR_TIME_SUSPECT_MAX_STOP_SEC="${PGM_CONTOUR_TIME_SUSPECT_MAX_STOP_SEC:-45}"
+# Refuse Contour link when prev duration < ratio × next (short must not lead long).
+PGM_CONTOUR_SHORT_LEAD_RATIO="${PGM_CONTOUR_SHORT_LEAD_RATIO:-0.5}"
 # Suspect Contour review blobs (parallel notes); filled by build_contour_suspect_groups.
 CONTOUR_SUSPECT_BLOBS=()
 CONTOUR_SUSPECT_NOTES=()
@@ -4755,29 +4983,46 @@ contour_chapter_time_delta() {
   printf '%s\n' "$CONTOUR_LINK_DELTA"
 }
 
+# Refuse Contour chain when prev is much shorter than next (short must not lead long).
+# Default: prev duration must be ≥ 0.5 × next. Unknown durations → allow (time rules still apply).
+contour_chapter_duration_allows_link() {
+  local prev_f="$1" next_f="$2"
+  local prev_d next_d ratio
+  ratio="${PGM_CONTOUR_SHORT_LEAD_RATIO:-0.5}"
+  if ! awk -v r="$ratio" 'BEGIN { exit !(r+0 > 0 && r+0 <= 1) }'; then
+    ratio=0.5
+  fi
+  prev_d=$(ffprobe_duration_seconds "$prev_f" 2>/dev/null) || prev_d=""
+  next_d=$(ffprobe_duration_seconds "$next_f" 2>/dev/null) || next_d=""
+  [[ -n "$prev_d" && -n "$next_d" ]] || return 0
+  awk -v p="$prev_d" -v n="$next_d" -v r="$ratio" 'BEGIN { exit !(p+0 >= r*(n+0)) }'
+}
+
 # Confident Contour link: next may start TOLERANCE early … MAX_STOP after expected end.
 contour_chapter_timestamps_follow() {
   local prev_f="$1" next_f="$2"
   local delta tol max_stop
   delta=$(contour_chapter_time_delta "$prev_f" "$next_f" 2>/dev/null) || return 1
+  contour_chapter_duration_allows_link "$prev_f" "$next_f" || return 1
   tol="${PGM_CONTOUR_TIME_TOLERANCE_SEC:-30}"
-  max_stop="${PGM_CONTOUR_TIME_MAX_STOP_SEC:-45}"
+  max_stop="${PGM_CONTOUR_TIME_MAX_STOP_SEC:-12}"
   [[ "$tol" =~ ^[0-9]+$ ]] || tol=30
-  [[ "$max_stop" =~ ^[0-9]+$ ]] || max_stop=45
+  [[ "$max_stop" =~ ^[0-9]+$ ]] || max_stop=12
   (( delta >= -tol && delta <= max_stop ))
 }
 
-# Suspect Contour link: after confident MAX_STOP, through SUSPECT_MAX_STOP (default 46–100).
+# Suspect Contour link: after confident MAX_STOP, through SUSPECT_MAX_STOP (default 13–45).
 contour_chapter_timestamps_suspect_link() {
   local prev_f="$1" next_f="$2"
   local delta tol max_stop suspect_max
   delta=$(contour_chapter_time_delta "$prev_f" "$next_f" 2>/dev/null) || return 1
+  contour_chapter_duration_allows_link "$prev_f" "$next_f" || return 1
   tol="${PGM_CONTOUR_TIME_TOLERANCE_SEC:-30}"
-  max_stop="${PGM_CONTOUR_TIME_MAX_STOP_SEC:-45}"
-  suspect_max="${PGM_CONTOUR_TIME_SUSPECT_MAX_STOP_SEC:-100}"
+  max_stop="${PGM_CONTOUR_TIME_MAX_STOP_SEC:-12}"
+  suspect_max="${PGM_CONTOUR_TIME_SUSPECT_MAX_STOP_SEC:-45}"
   [[ "$tol" =~ ^[0-9]+$ ]] || tol=30
-  [[ "$max_stop" =~ ^[0-9]+$ ]] || max_stop=45
-  [[ "$suspect_max" =~ ^[0-9]+$ ]] || suspect_max=100
+  [[ "$max_stop" =~ ^[0-9]+$ ]] || max_stop=12
+  [[ "$suspect_max" =~ ^[0-9]+$ ]] || suspect_max=45
   (( suspect_max > max_stop )) || return 1
   (( delta > max_stop && delta <= suspect_max ))
 }
@@ -4787,10 +5032,11 @@ contour_chapter_timestamps_within_suspect_ceiling() {
   local prev_f="$1" next_f="$2"
   local delta tol suspect_max
   delta=$(contour_chapter_time_delta "$prev_f" "$next_f" 2>/dev/null) || return 1
+  contour_chapter_duration_allows_link "$prev_f" "$next_f" || return 1
   tol="${PGM_CONTOUR_TIME_TOLERANCE_SEC:-30}"
-  suspect_max="${PGM_CONTOUR_TIME_SUSPECT_MAX_STOP_SEC:-100}"
+  suspect_max="${PGM_CONTOUR_TIME_SUSPECT_MAX_STOP_SEC:-45}"
   [[ "$tol" =~ ^[0-9]+$ ]] || tol=30
-  [[ "$suspect_max" =~ ^[0-9]+$ ]] || suspect_max=100
+  [[ "$suspect_max" =~ ^[0-9]+$ ]] || suspect_max=45
   (( delta >= -tol && delta <= suspect_max ))
 }
 
@@ -4994,9 +5240,9 @@ build_contour_size_split_groups() {
   GROUP_BLOBS=( "${kept[@]}" "${new_groups[@]}" )
 }
 
-# After confident Contour groups: find runs with at least one 46–100s gap (suspect review).
+# After confident Contour groups: find runs with at least one suspect-band gap (review).
 # Uses Contour files from remaining singles and from confident Contour groups so a
-# confident [1,2] plus +54s file 3 becomes a suspect [1,2,3] for manual review.
+# confident [1,2] plus a longer-gap file 3 becomes a suspect [1,2,3] for manual review.
 build_contour_suspect_groups() {
   local -a pool=() run=() files=()
   local blob f base i n note
@@ -6658,9 +6904,9 @@ build_chapter_groups() {
   build_letter_chapter_groups
   # 5) ~4 GB / ~12 GB size-split chapters without letter / _part_XX names
   build_size_split_groups
-  # 6) Contour time-chain (bare / _NVenc_ / Contour+2; confident ≤45s)
+  # 6) Contour time-chain (bare / _NVenc_ / Contour+2; confident ≤12s; short↛long)
   build_contour_size_split_groups
-  # 6b) Contour suspect review runs (46–100s gaps; not auto-merged)
+  # 6b) Contour suspect review runs (13–45s gaps; not auto-merged)
   build_contour_suspect_groups
   # 7) 70mai NO* and EV* continuous journeys (sequence +1; EV may start sooner than a minute)
   build_dashcam_journey_groups
@@ -6825,7 +7071,7 @@ print_group_plan() {
     done
   fi
   if (( contour_groups > 0 )); then
-    echo "Merge candidates (Contour bare/_NVenc_/Contour+2; start+duration chain ≤${PGM_CONTOUR_TIME_MAX_STOP_SEC:-45}s after chapter end; size ignored aside from ${PGM_CONTOUR_MIN_BYTES:-10485760} B floor):"
+    echo "Merge candidates (Contour bare/_NVenc_/Contour+2; start+duration chain ≤${PGM_CONTOUR_TIME_MAX_STOP_SEC:-12}s after chapter end; short↛long ratio ${PGM_CONTOUR_SHORT_LEAD_RATIO:-0.5}; size ignored aside from ${PGM_CONTOUR_MIN_BYTES:-10485760} B floor):"
     gidx=0
     for blob in "${GROUP_BLOBS[@]}"; do
       group_files_to_array "$blob" files
@@ -6852,7 +7098,7 @@ print_group_plan() {
   fi
   contour_suspect_groups=${#CONTOUR_SUSPECT_BLOBS[@]}
   if (( contour_suspect_groups > 0 )); then
-    echo "Possible Contour merges (review — gap $(( ${PGM_CONTOUR_TIME_MAX_STOP_SEC:-45} + 1 ))–${PGM_CONTOUR_TIME_SUSPECT_MAX_STOP_SEC:-100}s after chapter end; default Skip, not auto-merged):"
+    echo "Possible Contour merges (review — gap $(( ${PGM_CONTOUR_TIME_MAX_STOP_SEC:-12} + 1 ))–${PGM_CONTOUR_TIME_SUSPECT_MAX_STOP_SEC:-45}s after chapter end; default Skip, not auto-merged):"
     gidx=0
     for i in "${!CONTOUR_SUSPECT_BLOBS[@]}"; do
       blob="${CONTOUR_SUSPECT_BLOBS[$i]}"
@@ -7915,7 +8161,7 @@ prompt_merge_group_edit_files() {
   return 0
 }
 
-# Sets REPLY to: merge | redo | skip | skip_all | merge_all | delete_inputs | write_gpx | preview_seams | edit | quit
+# Sets REPLY to: merge | redo | skip | skip_all | merge_all | delete_inputs | write_gpx | preview_seams | preview_joins | edit | quit
 # $3 = expected output file (may already exist). Remaining args are the chapter files.
 # A 70mai group is "already merged" only when the MP4 and a valid GPX are both there.
 prompt_merge_group_action() {
@@ -8087,20 +8333,22 @@ prompt_merge_group_action() {
       echo "$(pgm_ts) Contour suspect review (${suspect_note}). Not a confident chapter chain."
       echo "  [N] Skip — leave separate (default)"
       echo "  [m] Merge this suspected Contour group"
+      echo "  [1] Preview joins — last ${PGM_JOIN_PREVIEW_BEFORE:-2}s + first ${PGM_JOIN_PREVIEW_AFTER:-2}s of next"
       if (( ${#files[@]} >= 3 )); then
         echo "  [e] Edit inputs — choose which files to merge (e.g. 1-2)"
       fi
       echo "  [a] Skip all remaining groups"
       echo "  [q] Quit"
       if (( ${#files[@]} >= 3 )); then
-        pgm_read_key_choice "Contour suspect — group ${group_num}/${group_total} [N/m/e/a/q]: " n "nmeaq"
+        pgm_read_key_choice "Contour suspect — group ${group_num}/${group_total} [N/m/1/e/a/q]: " n "nm1eaq"
       else
-        pgm_read_key_choice "Contour suspect — group ${group_num}/${group_total} [N/m/a/q]: " n "nmaq"
+        pgm_read_key_choice "Contour suspect — group ${group_num}/${group_total} [N/m/1/a/q]: " n "nm1aq"
       fi
       choice="$REPLY"
       case "$choice" in
         n)  REPLY=skip; return 0 ;;
         m)  REPLY=merge; return 0 ;;
+        1)  REPLY=preview_joins; return 0 ;;
         e)  REPLY=edit; return 0 ;;
         a)  REPLY=skip_all; return 0 ;;
         q)  REPLY=quit; return 0 ;;
@@ -8108,6 +8356,7 @@ prompt_merge_group_action() {
     fi
     echo "  [Y] Merge this group (default)"
     echo "  [n] Skip this group"
+    echo "  [1] Preview joins — last ${PGM_JOIN_PREVIEW_BEFORE:-2}s + first ${PGM_JOIN_PREVIEW_AFTER:-2}s of next"
     if (( ${#files[@]} >= 3 )); then
       echo "  [e] Edit inputs — choose which files to merge (e.g. 1-2)"
     fi
@@ -8116,21 +8365,22 @@ prompt_merge_group_action() {
     echo "  [q] Quit"
     if (( ${#files[@]} >= 3 )); then
       if (( short_n )); then
-        pgm_read_key_choice "Short clip in this group. Merge anyway? [Y/n/e/a/m/q]: " y "yneamq"
+        pgm_read_key_choice "Short clip in this group. Merge anyway? [Y/n/1/e/a/m/q]: " y "yn1eamq"
       else
-        pgm_read_key_choice "Choice for group ${group_num}/${group_total} [Y/n/e/a/m/q]: " y "yneamq"
+        pgm_read_key_choice "Choice for group ${group_num}/${group_total} [Y/n/1/e/a/m/q]: " y "yn1eamq"
       fi
     else
       if (( short_n )); then
-        pgm_read_key_choice "Short clip in this group. Merge anyway? [Y/n/a/m/q]: " y "ynamq"
+        pgm_read_key_choice "Short clip in this group. Merge anyway? [Y/n/1/a/m/q]: " y "yn1amq"
       else
-        pgm_read_key_choice "Choice for group ${group_num}/${group_total} [Y/n/a/m/q]: " y "ynamq"
+        pgm_read_key_choice "Choice for group ${group_num}/${group_total} [Y/n/1/a/m/q]: " y "yn1amq"
       fi
     fi
     choice="$REPLY"
     case "$choice" in
       y)  REPLY=merge; return 0 ;;
       n)  REPLY=skip; return 0 ;;
+      1)  REPLY=preview_joins; return 0 ;;
       e)  REPLY=edit; return 0 ;;
       a)  REPLY=skip_all; return 0 ;;
       m)  REPLY=merge_all; return 0 ;;
@@ -8555,7 +8805,7 @@ do_merge() {
       fi
     fi
   done
-  # Contour suspect review groups (46–100s gaps): offered after confident groups.
+  # Contour suspect review groups (13–45s gaps): offered after confident groups.
   for si in "${!CONTOUR_SUSPECT_BLOBS[@]}"; do
     blob="${CONTOUR_SUSPECT_BLOBS[$si]}"
     group_files_to_array "$blob" files
@@ -8660,6 +8910,19 @@ do_merge() {
           return 2
         fi
         # Re-show detail (edited or cancelled) and ask again.
+        continue
+      fi
+      if [[ "$action" == preview_joins ]]; then
+        local join_rc=0
+        prompt_pre_merge_join_previews "${files[@]}"
+        join_rc=$?
+        if (( join_rc == 2 )); then
+          PGM_MERGE_GROUP_IS_CONTOUR_SUSPECT=0
+          PGM_MERGE_GROUP_CONTOUR_SUSPECT_NOTE=""
+          echo "$(pgm_ts) Quit at group ${group_num}."
+          return 2
+        fi
+        # Back to the merge menu after preview.
         continue
       fi
       break
@@ -8801,6 +9064,8 @@ GPS_DIRS=()
 FORCE_MERGE_ARGS=()
 
 PGM_SEAM_PREVIEW_BEFORE="${PGM_SEAM_PREVIEW_BEFORE:-1}"
+PGM_JOIN_PREVIEW_BEFORE="${PGM_JOIN_PREVIEW_BEFORE:-2}"
+PGM_JOIN_PREVIEW_AFTER="${PGM_JOIN_PREVIEW_AFTER:-2}"
 PGM_SEAM_PREVIEW_AFTER="${PGM_SEAM_PREVIEW_AFTER:-1}"
 PGM_SEAM_PREVIEW_WIDTH="${PGM_SEAM_PREVIEW_WIDTH-100}"
 PGM_SEAM_PREVIEW_HEIGHT="${PGM_SEAM_PREVIEW_HEIGHT-40}"
