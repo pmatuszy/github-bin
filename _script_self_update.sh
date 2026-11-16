@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261116.152500 - after [R]/[C]/[Q], drain leftover Enter from the tty so the next prompt is not auto-answered
 # v. 20261102.155130 - DEBUG trap must not clear BASH_REMATCH
 # v. 20261021.210400 - script_live_basename here; prefer SCRIPT_SELF_LIVE_PATH over stale CALLER_*
 # v. 20261021.143500 - after seal, restore $0 / CALLER_* to the live script name (not .deleteme.*.seal.*)
@@ -7,6 +8,10 @@
 # v. 20261020.202500 - detect live-script overwrite (git pull then copy into bin/) mid-run
 # v. 20261020.202200 - detect on-disk script replacement while a run is in progress
 #
+# 2026.11.16 - v. 1.7.152500 - After the single-key [R]/[C]/[Q] answer, drain leftover bytes
+#   (especially Enter) from /dev/tty and stdin. Without that, Continue left a newline in the
+#   buffer and the next one-key menu (e.g. Contour suspect, default Skip) was answered
+#   immediately — the run looked like it exited while groups remained.
 # 2026.11.02 - v. 1.6.155130 - DEBUG trap: validate the epoch with case, not =~, and save/restore
 #   BASH_REMATCH around the check. =~ here cleared the caller's captures, so the next
 #   line died under nounset (BASH_REMATCH[1]: unbound variable) and arithmetic saw 0.
@@ -283,6 +288,23 @@ script_self_update_reexec() {
   exec "${args[@]}"
 }
 
+# Drop leftover keypresses (Enter after a single-key answer, typeahead) so the
+# next interactive prompt is not answered by accident.
+script_self_update_drain_input() {
+  local tty_dev="${1:-/dev/tty}"
+  local discard drained=0 max_drain=64
+
+  if [[ -r "$tty_dev" ]]; then
+    while (( drained < max_drain )) && IFS= read -r -t 0.05 -n 1 discard <"$tty_dev"; do
+      ((++drained)) || true
+    done
+  fi
+  drained=0
+  while (( drained < max_drain )) && IFS= read -r -t 0.05 -n 1 discard; do
+    ((++drained)) || true
+  done
+}
+
 script_self_update_handle_change() {
   local answer="" new_fp="" new_ver="" old_ver="" tty_dev
   local ts
@@ -347,6 +369,9 @@ script_self_update_handle_change() {
     fi
   fi
   echo >&2
+  # Single-key read leaves a following Enter (and any typeahead) in the tty buffer.
+  # Drain it so the caller's next menu is not auto-answered with its default.
+  script_self_update_drain_input "$tty_dev"
 
   case "${answer}" in
     r|R)
@@ -361,6 +386,7 @@ script_self_update_handle_change() {
       ;;
     *)
       echo "[${ts}] Selected: continue with the already-running script" >&2
+      echo "[${ts}] Resuming where this run left off (remaining groups/prompts still ahead)." >&2
       SCRIPT_SELF_UPDATE_STATE=ignore
       SCRIPT_SELF_UPDATE_FP="$new_fp"
       return 0

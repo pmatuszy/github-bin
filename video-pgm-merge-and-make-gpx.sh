@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.152500 - Contour suspect closed menu; self-update Continue drains leftover Enter
 # v. 20261116.151500 - shared script_arrow_menu for multi-choice prompts
 # v. 20261116.145000 - keep video_merge_ctrl_c after post-merge so Ctrl-C still prints SUMMARY
 # v. 20261116.144500 - Ctrl-C prints run SUMMARY (timing) before exit
@@ -114,6 +115,9 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -
 
+# 2026.11.16 - v. 0.15.129 - Contour suspect choice is closed (no fall-through into the normal
+#   merge menu). Self-update [C]ontinue drains leftover Enter so the next group is not
+#   auto-skipped with the default.
 # 2026.11.16 - v. 0.15.128 - Interactive menus use shared Up/Down arrow selection
 #   (script_arrow_menu); sync PGM_USE_COLORS to SCRIPT_* for highlight colors.
 # 2026.11.16 - v. (Ctrl-C) - post-merge prompts keep video_merge_ctrl_c so SUMMARY still prints.
@@ -1796,8 +1800,16 @@ pgm_note_processed_group() {
 
 flush_stdin() {
   local discard drained=0 max_drain=256
+  # Prefer /dev/tty: self-update and other helpers may leave Enter there while
+  # stdin is a pipe or already empty.
+  if [[ -r /dev/tty ]]; then
+    while (( drained < max_drain )) && IFS= read -r -t 0.02 -n 1 discard </dev/tty; do
+      ((++drained)) || true
+    done
+  fi
+  drained=0
   while (( drained < max_drain )) && IFS= read -r -t 0.02 -n 1 discard; do
-    ((++drained))
+    ((++drained)) || true
   done
 }
 
@@ -8973,19 +8985,24 @@ prompt_merge_group_action() {
         suspect_menu+=( "e|Edit inputs — choose which files to merge (e.g. 1-2)" )
       fi
       suspect_menu+=( "a|Skip all remaining groups" "q|Quit" )
-      echo
-      pgm_print_question "Contour suspect — group ${group_num}/${group_total}"
-      echo
-      pgm_arrow_menu n "${suspect_menu[@]}"
-      choice="${REPLY,,}"
-      case "$choice" in
-        n)  REPLY=skip; return 0 ;;
-        1)  REPLY=preview_joins; return 0 ;;
-        m)  REPLY=merge; return 0 ;;
-        e)  REPLY=edit; return 0 ;;
-        a)  REPLY=skip_all; return 0 ;;
-        q)  REPLY=quit; return 0 ;;
-      esac
+      while true; do
+        echo
+        pgm_print_question "Contour suspect — group ${group_num}/${group_total}"
+        echo
+        pgm_arrow_menu n "${suspect_menu[@]}"
+        choice="${REPLY,,}"
+        case "$choice" in
+          n)  REPLY=skip; return 0 ;;
+          1)  REPLY=preview_joins; return 0 ;;
+          m)  REPLY=merge; return 0 ;;
+          e)  REPLY=edit; return 0 ;;
+          a)  REPLY=skip_all; return 0 ;;
+          q)  REPLY=quit; return 0 ;;
+          *)
+            echo "$(pgm_ts) Unknown choice: ${REPLY:-}. Choose from the list."
+            ;;
+        esac
+      done
     fi
     local needs_norm=0 merge_def="" 
     local -a merge_menu=()
