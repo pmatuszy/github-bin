@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.153500 - fix typo tl_require_encode→tl_require_encoder so auto encoder list loads
 # v. 20261116.151500 - use shared script_arrow_menu; more prompts use Up/Down
 # v. 20261116.150500 - speed menu: Up/Down arrows + Enter (inline highlight)
 # v. 20261116.143700 - ask Use colors?; green prompts; highlight (default) on menus
@@ -64,6 +65,8 @@
 # v. 20260930.221500 - file prompts: one key, no Ente
 # v. 20260930.220400 - faster viewing copy of a merged video (2, 5, 10, 20, …)
 
+# 2026.11.16 - v. 0.62 - Call sites said tl_require_encode (undefined); rename to
+#   tl_require_encoder so ffmpeg -encoders is loaded before auto picks hevc_nvenc/libx265.
 # 2026.11.16 - v. 0.61 - Interactive menus use shared Up/Down arrow selection
 #   (script_arrow_menu); speed menu plus other multi-choice prompts.
 # 2026.11.16 - v. 0.60 - Speed menu: Up/Down moves a highlight, Enter selects; letter keys
@@ -1901,9 +1904,13 @@ tl_encode_one() {
   else
     echo "$(tl_ts) Source video codec: unknown"
   fi
+  # Defensive: callers should have run tl_require_encoder; reload if the list is empty.
+  if [[ -z "${TL_ENCODER_LIST:-}" || "${TL_ENCODER_LIST}" != *Encoders:* ]]; then
+    tl_load_encoders
+  fi
   mapfile -t kinds < <(tl_encoder_candidates "$encoder_want" "$src_codec")
   if (( ${#kinds[@]} == 0 )); then
-    echo "$(tl_ts) No usable video encoder for '${encoder_want}'." >&2
+    echo "$(tl_ts) No usable video encoder for '${encoder_want}' (need hevc_nvenc/libx265 and/or h264_nvenc/libx264 in this ffmpeg)." >&2
     tl_note_encoder_probe_failure
     tl_summary_add "$src" "$dur" "" "" "${TL_FILE_PROC:-0}"
     TL_ENCODE_RECORDED=1
@@ -3649,8 +3656,13 @@ tl_set_gop_spec() {
 
 tl_require_encoder() {
   tl_load_encoders
+  if [[ "${TL_ENCODER_LIST:-}" != *Encoders:* ]]; then
+    echo "$(tl_ts) Could not list ffmpeg video encoders (is ffmpeg working?)." >&2
+    tl_note_encoder_probe_failure
+    exit 1
+  fi
   tl_encoder_candidates "$ENCODER" "" >/dev/null || {
-    echo "$(tl_ts) No usable video encoder for '${ENCODER}'." >&2
+    echo "$(tl_ts) No usable video encoder for '${ENCODER}' (need hevc_nvenc/libx265 and/or h264_nvenc/libx264 in this ffmpeg)." >&2
     tl_note_encoder_probe_failure
     exit 1
   }
@@ -4094,7 +4106,7 @@ if (( script_is_run_interactively )) && (( ! DO_YES )); then
   [[ -n "$SPEED" ]] || SPEED=5
   [[ -n "$TL_DISPLAY" ]] || TL_DISPLAY=normal
   tl_prompt_display
-  tl_require_encode
+  tl_require_encoder
   tl_prompt_advanced
   while true; do
     tl_print_plan
@@ -4111,7 +4123,7 @@ if (( script_is_run_interactively )) && (( ! DO_YES )); then
         tl_ask_speed
         tl_prompt_display
         tl_prompt_advanced
-        tl_require_encode
+        tl_require_encoder
         ;;
       q)
         echo "$(tl_ts) Quit."
@@ -4129,7 +4141,7 @@ if (( script_is_run_interactively )) && (( ! DO_YES )); then
 else
   [[ -n "$SPEED" ]] || SPEED=5
   [[ -n "$TL_DISPLAY" ]] || TL_DISPLAY=normal
-  tl_require_encode
+  tl_require_encoder
   if [[ "${TL_GOP_KIND:-default}" == default && ${TL_GOP_EXPLICIT:-0} -eq 0 ]]; then
     tl_use_usual_gop
   fi
