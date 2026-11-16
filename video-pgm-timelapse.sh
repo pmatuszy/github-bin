@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.150500 - speed menu: Up/Down arrows + Enter (inline highlight)
 # v. 20261116.143700 - ask Use colors?; green prompts; highlight (default) on menus
 # v. 20261115.200000 - SUMMARY: Family-A chrome + Script/Version at top
 # v. 20261027.181751 - output-dates upfront: [P] pick per file is first and the default
@@ -62,6 +63,8 @@
 # v. 20260930.221500 - file prompts: one key, no Ente
 # v. 20260930.220400 - faster viewing copy of a merged video (2, 5, 10, 20, …)
 
+# 2026.11.16 - v. 0.60 - Speed menu: Up/Down moves a highlight, Enter selects; letter keys
+#   still work as before. Non-TTY falls back to the plain one-key list.
 # 2026.11.16 - v. 0.59 - Ask Use colors? at startup (default Yes); green single-key prompts;
 #   highlight "(default)" on menu lines (shared _script_header helpers).
 # 2026.10.27 - v. 0.58 - output-dates upfront menu: [P] Pick per file now is listed first and is the default (Enter)
@@ -207,8 +210,9 @@ Options:
                        and prints which output is already there.
 
 An interactive run asks the questions, then prints the equivalent command and
-asks whether to encode. Answering no walks the questions again, and Ente
-keeps each current answer. -y skips the questions and that confirmation.
+asks whether to encode. Answering no walks the questions again, and Enter
+keeps each current answer. The speed menu supports Up/Down arrows and Enter
+(letter keys still work). -y skips the questions and that confirmation.
 A pasted command with -y encodes without asking.
 
 Environment:
@@ -437,12 +441,18 @@ tl_ctrl_c() {
   # Ignore further INT while we stop ffmpeg and remove the partial (double Ctrl-C).
   trap '' INT
   TL_STOPPED=yes
+  if declare -F tl_arrow_menu_restore_tty >/dev/null 2>&1; then
+    tl_arrow_menu_restore_tty
+  fi
   tl_stop_ffmpeg
   tl_cleanup_partial
   ctrl_c
 }
 
 tl_on_exit() {
+  if declare -F tl_arrow_menu_restore_tty >/dev/null 2>&1; then
+    tl_arrow_menu_restore_tty
+  fi
   tl_processing_end
   tl_summary_flush_open_encode
   tl_stop_ffmpeg
@@ -2213,6 +2223,146 @@ tl_prompt_input_files() {
   echo "$(tl_ts) Will encode ${#TL_INPUTS[@]} video(s)."
 }
 
+TL_ARROW_STTY=""
+
+tl_arrow_menu_restore_tty() {
+  printf '\033[?25h' 2>/dev/null || true
+  if [[ -n "${TL_ARROW_STTY:-}" ]]; then
+    stty "$TL_ARROW_STTY" 2>/dev/null || true
+    TL_ARROW_STTY=""
+  fi
+}
+
+# Inline Up/Down menu. $1 = default key; remaining args are "key|label".
+# Sets REPLY to the chosen key (lowercase). Arrow keys move the highlight;
+# Enter accepts it; pressing a listed key accepts immediately (same as before).
+# When stdin/stdout are not TTYs, prints a static list and uses tl_read_key.
+tl_arrow_menu() {
+  local def_key="$1"
+  shift
+  local -a keys=() labels=()
+  local item i n idx=0
+  local byte="" c2="" c3="" ch="" accepted=0
+  local rows=0
+
+  for item in "$@"; do
+    keys+=("${item%%|*}")
+    labels+=("${item#*|}")
+  done
+  n=${#keys[@]}
+  (( n > 0 )) || {
+    REPLY="$(tl_choice "$def_key")"
+    return 1
+  }
+
+  def_key="$(tl_choice "$def_key")"
+  for (( i = 0; i < n; i++ )); do
+    if [[ "$(tl_choice "${keys[i]}")" == "$def_key" ]]; then
+      idx=$i
+      break
+    fi
+  done
+
+  if [[ ! -t 0 || ! -t 1 ]]; then
+    for (( i = 0; i < n; i++ )); do
+      script_echo_option "  [$(tl_k "${keys[i]}" "$def_key")] ${labels[i]}$(tl_def_mark "${keys[i]}" "$def_key")"
+    done
+    echo
+    tl_read_key "Choice [$(tl_keys "$def_key" "${keys[@]}")]: " "$def_key"
+    REPLY="$(tl_choice "$REPLY")"
+    return 0
+  fi
+
+  tl_arrow_menu_draw() {
+    local j line key_disp mark
+    for (( j = 0; j < n; j++ )); do
+      key_disp="$(tl_k "${keys[j]}" "$def_key")"
+      mark="$(tl_def_mark "${keys[j]}" "$def_key")"
+      if (( j == idx )); then
+        if (( SCRIPT_USE_COLORS )); then
+          printf ' %s>%s [%s] %s%s%s%s\n' \
+            "$SCRIPT_C_G" "$SCRIPT_C_0" "$key_disp" \
+            "$SCRIPT_C_G" "${labels[j]}" "$mark" "$SCRIPT_C_0"
+        else
+          printf ' > [%s] %s%s\n' "$key_disp" "${labels[j]}" "$mark"
+        fi
+      else
+        line="   [${key_disp}] ${labels[j]}${mark}"
+        script_echo_option "$line"
+      fi
+    done
+    echo
+    if (( SCRIPT_USE_COLORS )); then
+      printf '  %sUp/Down move · Enter select · or press a listed key%s\n' \
+        "$SCRIPT_C_G" "$SCRIPT_C_0"
+    else
+      echo "  Up/Down move · Enter select · or press a listed key"
+    fi
+  }
+
+  TL_ARROW_STTY="$(stty -g 2>/dev/null || true)"
+  stty -echo -icanon min 1 time 0 2>/dev/null || true
+  printf '\033[?25l'
+  tl_flush_stdin
+  tl_arrow_menu_draw
+  rows=$((n + 2))
+
+  while (( ! accepted )); do
+    byte=""
+    IFS= read -r -n 1 byte || byte=""
+    if [[ "$byte" == $'\033' ]]; then
+      c2=""
+      c3=""
+      IFS= read -r -t 0.05 -n 1 c2 || c2=""
+      if [[ "$c2" == '[' || "$c2" == 'O' ]]; then
+        IFS= read -r -t 0.05 -n 1 c3 || c3=""
+        case "$c3" in
+          A)
+            if (( idx > 0 )); then
+              idx=$((idx - 1))
+            fi
+            printf '\033[%dA' "$rows"
+            tl_arrow_menu_draw
+            continue
+            ;;
+          B)
+            if (( idx < n - 1 )); then
+              idx=$((idx + 1))
+            fi
+            printf '\033[%dA' "$rows"
+            tl_arrow_menu_draw
+            continue
+            ;;
+        esac
+      fi
+      continue
+    fi
+
+    # Enter (newline / CR) or empty read after delimiter → accept highlight.
+    if [[ -z "$byte" || "$byte" == $'\n' || "$byte" == $'\r' ]]; then
+      REPLY="$(tl_choice "${keys[idx]}")"
+      accepted=1
+      break
+    fi
+
+    ch="$(tl_choice "$byte")"
+    for (( i = 0; i < n; i++ )); do
+      if [[ "$(tl_choice "${keys[i]}")" == "$ch" ]]; then
+        idx=$i
+        REPLY="$ch"
+        accepted=1
+        printf '\033[%dA' "$rows"
+        tl_arrow_menu_draw
+        break
+      fi
+    done
+  done
+
+  tl_arrow_menu_restore_tty
+  echo
+  return 0
+}
+
 tl_flush_stdin() {
   local discard drained=0
   while (( drained < 256 )) && IFS= read -r -t 0.02 -n 1 discard; do
@@ -2425,7 +2575,7 @@ tl_prepare_unattended() {
 }
 
 tl_prompt_speed() {
-  local choice="" answer="" cur def five_note="" custom_def=5
+  local choice="" answer="" cur def custom_def=5
   if (( DO_YES )) || (( ! script_is_run_interactively )); then
     SPEED="${SPEED:-${PGM_TIMELAPSE_SPEED:-5}}"
     tl_is_speed "$SPEED" || SPEED=5
@@ -2437,20 +2587,18 @@ tl_prompt_speed() {
   if [[ "$def" == c ]]; then
     custom_def="$cur"
   fi
-  [[ "$def" == 2 ]] && five_note=" (default)"
-  echo "How much faster? [$(tl_keys "$def" 1 2 3 4 5 6 7 c q)]"
+  echo "How much faster?"
   echo
-  echo "  [1]  2×"
-  echo "  [2]  5×${five_note}"
-  echo "  [3] 10×"
-  echo "  [4] 15×"
-  echo "  [5] 20×"
-  echo "  [6] 25×"
-  echo "  [7] 30×"
-  echo "  [$(tl_k c "$def")] Custom  type an integer from 2 to 240$(tl_def_mark c "$def")"
-  echo "  [q] Quit"
-  echo
-  tl_read_key "Speed [$(tl_keys "$def" 1 2 3 4 5 6 7 c q)]: " "$def"
+  tl_arrow_menu "$def" \
+    "1|2×" \
+    "2|5×" \
+    "3|10×" \
+    "4|15×" \
+    "5|20×" \
+    "6|25×" \
+    "7|30×" \
+    "c|Custom — type an integer from 2 to 240" \
+    "q|Quit"
   choice="$(tl_choice "$REPLY")"
   case "$choice" in
     1) SPEED=2 ;;
