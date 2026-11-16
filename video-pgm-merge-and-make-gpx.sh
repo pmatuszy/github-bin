@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.084800 - [1] join preview: stitch ±2s into one …_DELETE_ME.mp4 then play; delete after
 # v. 20261116.083600 - group prompt: [1] preview joins (last 2s + first 2s of next) before merge
 # v. 20261116.083200 - Contour: confident ≤12s; suspect 13–45s; short must not lead long; gap on INPUT line
 # v. 20261116.073500 - group prompt: [e] edit inputs (subset / drop last) before merge
@@ -101,6 +102,10 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.11.16 - v. 0.15.117 - [1] join preview builds one ~4s stitch (last 2s of N + first 2s of N+1)
+#   via ffmpeg into .pgm_join_preview_NN_DELETE_ME.mp4 beside the inputs, plays that single file,
+#   then deletes it when you continue / skip / quit (kept only for [y] repeat). Copy-concat first;
+#   filter_complex re-encode fallback if copy fails.
 # 2026.11.16 - v. 0.15.116 - group merge prompt: [1] Preview joins before merging — play last 2s of
 #   clip N then first 2s of clip N+1 in the terminal (per join; back to the merge menu after). Same
 #   on Contour suspect. Defaults via PGM_JOIN_PREVIEW_BEFORE / PGM_JOIN_PREVIEW_AFTER (2s each).
@@ -401,11 +406,12 @@ Merge behaviour:
   - Shows each multi-part group (with file sizes) and asks whether to merge
     (single-key Y/N/A/M/E/1/Q, no Enter — like rename.sh). [Y] merges this group
     (default); [m] merges all remaining groups (asks output date/time for each first).
-    [1] previews each join in the terminal (last 2s of clip N, then first 2s of
-    N+1) then returns to this prompt. [e] (groups with 3+ files) edits the
-    suggestion: keep a subset by number (e.g. 1-2) or drop the last file, then
-    asks again for the trimmed group. Contour suspect review offers [1] and [e]
-    (default remains Skip).
+    [1] previews each join: ffmpeg stitches last 2s of clip N + first 2s of N+1
+    into one .pgm_join_preview_NN_DELETE_ME.mp4 beside the inputs, plays that
+    single clip, then deletes it when you continue (kept for repeat). [e]
+    (groups with 3+ files) edits the suggestion: keep a subset by number
+    (e.g. 1-2) or drop the last file, then asks again for the trimmed group.
+    Contour suspect review offers [1] and [e] (default remains Skip).
     Files in a group, and the groups themselves, are ordered oldest to newest
     (filename YYYYMMDD_HHMMSS when present, otherwise filesystem mtime) before that
     prompt. After the input and output lists, a boxed summary shows how many files
@@ -1177,6 +1183,8 @@ MERGE_IN_PLACE_FOR_RUN=0
 SEAM_PREVIEW_SKIP_RUN=0
 # 1 when pre-merge join preview ([1]) stays off for the rest of this run.
 JOIN_PREVIEW_SKIP_RUN=0
+# Path of the current …_DELETE_ME.mp4 join-preview stitch (removed after play unless repeating).
+PGM_JOIN_PREVIEW_FILE=""
 # 1 when input chapter files stay for the rest of this run.
 KEEP_INPUTS_FOR_RUN=0
 # 1 when groups that are already merged are not asked about again this run.
@@ -2060,17 +2068,53 @@ prompt_seam_terminal_previews() {
   return 0
 }
 
-# Play last BEFORE seconds of left, then first AFTER seconds of right (pre-merge [1]).
-play_pre_merge_join_preview_once() {
-  local player="$1" left="$2" right="$3" join_num="$4" total_joins="$5" ord="$6"
+# Remove a join-preview stitch (…_DELETE_ME.mp4). Clears PGM_JOIN_PREVIEW_FILE when it matches.
+pgm_join_preview_cleanup() {
+  local f="${1:-${PGM_JOIN_PREVIEW_FILE:-}}"
+  [[ -n "$f" ]] || return 0
+  [[ -e "$f" ]] && rm -f -- "$f"
+  if [[ -n "${PGM_JOIN_PREVIEW_FILE:-}" && "$f" == "$PGM_JOIN_PREVIEW_FILE" ]]; then
+    PGM_JOIN_PREVIEW_FILE=""
+  fi
+}
+
+# Path for join-preview stitch beside the left chapter: .pgm_join_preview_NN_DELETE_ME.mp4
+pgm_join_preview_out_path() {
+  local left="$1" join_num="$2"
+  local dir
+  dir=$(dirname -- "$left")
+  [[ -n "$dir" ]] || dir="."
+  printf '%s/.pgm_join_preview_%02d_DELETE_ME.mp4\n' "$dir" "$join_num"
+}
+
+# Build one ~4s stitch (last BEFORE of left + first AFTER of right) via ffmpeg.
+# Sets PGM_JOIN_PREVIEW_FILE and prints the path. Reuses an existing file for the same join.
+# Returns 0 on success, 1 on failure (no leftover temps).
+build_pre_merge_join_preview_file() {
+  local left="$1" right="$2" join_num="$3"
   local before after left_dur right_dur left_start left_len right_len
-  local preview_w preview_h gap_note=""
-  local -a player_args=()
+  local out work part_a part_b list rc=0
+  local left_abs right_abs
 
   before="${PGM_JOIN_PREVIEW_BEFORE:-2}"
   after="${PGM_JOIN_PREVIEW_AFTER:-2}"
   [[ "$before" =~ ^[0-9]+([.][0-9]+)?$ ]] || before=2
   [[ "$after" =~ ^[0-9]+([.][0-9]+)?$ ]] || after=2
+
+  out=$(pgm_join_preview_out_path "$left" "$join_num")
+  if [[ -n "${PGM_JOIN_PREVIEW_FILE:-}" && -f "${PGM_JOIN_PREVIEW_FILE}" \
+    && "${PGM_JOIN_PREVIEW_FILE}" == "$out" ]]; then
+    printf '%s\n' "$out"
+    return 0
+  fi
+  # Different join / stale file: drop previous stitch.
+  pgm_join_preview_cleanup
+  [[ -e "$out" ]] && rm -f -- "$out"
+
+  if ! command -v ffmpeg >/dev/null 2>&1; then
+    echo "$(pgm_ts) ffmpeg not found — cannot build join preview stitch." >&2
+    return 1
+  fi
   left_dur=$(ffprobe_duration_seconds "$left" 2>/dev/null) || left_dur=""
   right_dur=$(ffprobe_duration_seconds "$right" 2>/dev/null) || right_dur=""
   if [[ -z "$left_dur" || -z "$right_dur" ]]; then
@@ -2086,34 +2130,123 @@ play_pre_merge_join_preview_once() {
   right_len=$(awk -v d="$right_dur" -v a="$after" 'BEGIN {
     if (d + 0 <= a + 0) printf "%.3f", d; else printf "%.3f", a
   }')
+
+  left_abs=$(pgm_abs_path "$left" 2>/dev/null) || left_abs="$left"
+  right_abs=$(pgm_abs_path "$right" 2>/dev/null) || right_abs="$right"
+  work=$(mktemp -d "${TMPDIR:-/tmp}/pgm_join_preview.XXXXXX") || return 1
+  part_a="${work}/a.mp4"
+  part_b="${work}/b.mp4"
+  list="${work}/list.txt"
+
+  # Prefer stream-copy cuts + concat (same look as Contour merge when it works).
+  if ffmpeg -y -hide_banner -loglevel error \
+      -ss "$left_start" -i "$left_abs" -t "$left_len" \
+      -c copy -avoid_negative_ts make_zero "$part_a" 2>/dev/null \
+    && ffmpeg -y -hide_banner -loglevel error \
+      -ss 0 -i "$right_abs" -t "$right_len" \
+      -c copy -avoid_negative_ts make_zero "$part_b" 2>/dev/null; then
+    : >"$list"
+    printf "file '%s'\n" "$(pgm_ffmpeg_concat_escape_path "$part_a")" >>"$list"
+    printf "file '%s'\n" "$(pgm_ffmpeg_concat_escape_path "$part_b")" >>"$list"
+    if ffmpeg -y -hide_banner -loglevel error -stats \
+        -f concat -safe 0 -i "$list" -c copy -movflags +faststart "$out" 2>/dev/null; then
+      rc=0
+    else
+      rc=1
+    fi
+  else
+    rc=1
+  fi
+
+  # Fallback: precise filter_complex re-encode (~4s, ultrafast).
+  if (( rc != 0 )); then
+    rm -f -- "$out"
+    echo "$(pgm_ts) Join preview copy-stitch failed — re-encoding a short preview…"
+    if ffmpeg -y -hide_banner -loglevel error -stats \
+        -ss "$left_start" -t "$left_len" -i "$left_abs" \
+        -ss 0 -t "$right_len" -i "$right_abs" \
+        -filter_complex "[0:v:0][0:a:0][1:v:0][1:a:0]concat=n=2:v=1:a=1[v][a]" \
+        -map "[v]" -map "[a]" \
+        -c:v libx264 -preset ultrafast -crf 23 -c:a aac -movflags +faststart \
+        "$out" 2>/dev/null; then
+      rc=0
+    elif ffmpeg -y -hide_banner -loglevel error -stats \
+        -ss "$left_start" -t "$left_len" -i "$left_abs" \
+        -ss 0 -t "$right_len" -i "$right_abs" \
+        -filter_complex "[0:v:0][1:v:0]concat=n=2:v=1:a=0[v]" \
+        -map "[v]" -an \
+        -c:v libx264 -preset ultrafast -crf 23 -movflags +faststart \
+        "$out" 2>/dev/null; then
+      rc=0
+    else
+      rc=1
+    fi
+  fi
+
+  rm -rf -- "$work"
+  if (( rc != 0 )) || [[ ! -f "$out" ]]; then
+    rm -f -- "$out"
+    echo "$(pgm_ts) Could not build join preview stitch." >&2
+    return 1
+  fi
+  PGM_JOIN_PREVIEW_FILE="$out"
+  printf '%s\n' "$out"
+  return 0
+}
+
+# Build (or reuse) the DELETE_ME stitch and play it as one clip (pre-merge [1]).
+play_pre_merge_join_preview_once() {
+  local player="$1" left="$2" right="$3" join_num="$4" total_joins="$5" ord="$6"
+  local before after left_dur right_dur left_len right_len
+  local preview_w preview_h gap_note="" preview=""
+  local -a player_args=()
+
+  before="${PGM_JOIN_PREVIEW_BEFORE:-2}"
+  after="${PGM_JOIN_PREVIEW_AFTER:-2}"
+  [[ "$before" =~ ^[0-9]+([.][0-9]+)?$ ]] || before=2
+  [[ "$after" =~ ^[0-9]+([.][0-9]+)?$ ]] || after=2
+  left_dur=$(ffprobe_duration_seconds "$left" 2>/dev/null) || left_dur=""
+  right_dur=$(ffprobe_duration_seconds "$right" 2>/dev/null) || right_dur=""
+  if [[ -z "$left_dur" || -z "$right_dur" ]]; then
+    echo "$(pgm_ts) Cannot read duration for join preview." >&2
+    return 1
+  fi
+  left_len=$(awk -v d="$left_dur" -v b="$before" 'BEGIN {
+    if (d + 0 <= b + 0) printf "%.3f", d; else printf "%.3f", b
+  }')
+  right_len=$(awk -v d="$right_dur" -v a="$after" 'BEGIN {
+    if (d + 0 <= a + 0) printf "%.3f", d; else printf "%.3f", a
+  }')
   gap_note=$(pgm_format_gap_to_next_note "$left" "$right" 2>/dev/null) || gap_note=""
   [[ -n "$ord" ]] || ord="$(pgm_ordinal_seam_label "$join_num")"
   preview_w="${PGM_SEAM_PREVIEW_WIDTH-100}"
   preview_h="${PGM_SEAM_PREVIEW_HEIGHT-40}"
 
   echo
-  echo "Playing ${ord} join (${join_num} of ${total_joins}) — inputs (not merged yet)"
+  echo "Building ${ord} join preview (${join_num} of ${total_joins}) — one ~$(( ${left_len%.*} + ${right_len%.*} ))s stitch"
   echo "  ${left##*/} | ${right##*/}"
   [[ -n "$gap_note" ]] && echo "  ${gap_note}"
-  echo "  End of left: last ${left_len}s; start of right: first ${right_len}s."
+  echo "  Last ${left_len}s of left + first ${right_len}s of right → …_DELETE_ME.mp4"
+
+  if ! preview=$(build_pre_merge_join_preview_file "$left" "$right" "$join_num"); then
+    return 1
+  fi
+  echo "  Built: ${preview}"
 
   player_args=( --no-countdown )
   if [[ -n "$preview_w" && -n "$preview_h" ]]; then
     player_args+=( --no-autodetect -w "$preview_w" -H "$preview_h" )
     echo "  Preview size: ${preview_w} x ${preview_h} terminal cells."
   fi
-
-  echo "  → ${left##*/} (end)"
-  "${player}" "${player_args[@]}" --start "$left_start" --length "$left_len" "$left" || true
-  echo "  → ${right##*/} (start)"
-  "${player}" "${player_args[@]}" --start 0 --length "$right_len" "$right" || true
+  echo "  Playing stitch…"
+  "${player}" "${player_args[@]}" "$preview" || true
 }
 
-# Pre-merge [1]: preview each join (end of N + start of N+1). Return 2 on quit.
+# Pre-merge [1]: stitch+play each join; delete DELETE_ME unless repeating. Return 2 on quit.
 prompt_pre_merge_join_previews() {
   local -a files=("$@")
   local player i choice join_num total_joins ord gap_note skip_rest=0
-  local before after
+  local before after keep_preview=0
 
   if (( JOIN_PREVIEW_SKIP_RUN )); then
     echo "$(pgm_ts) Join preview off for the rest of this run."
@@ -2131,24 +2264,30 @@ prompt_pre_merge_join_previews() {
     echo "$(pgm_ts) Install it to /root/bin or set VIDEO_PGM_PLAY_TERMINAL_BIN."
     return 0
   fi
+  if ! command -v ffmpeg >/dev/null 2>&1; then
+    echo "$(pgm_ts) ffmpeg not found — join preview needs ffmpeg to stitch a short clip."
+    return 0
+  fi
 
   before="${PGM_JOIN_PREVIEW_BEFORE:-2}"
   after="${PGM_JOIN_PREVIEW_AFTER:-2}"
   total_joins=$(( ${#files[@]} - 1 ))
   echo
-  echo "Terminal join preview (before merge): ${player}"
-  echo "Each join: last ${before}s of clip N, then first ${after}s of clip N+1."
+  echo "Terminal join preview (before merge): stitch then play"
+  echo "Each join: last ${before}s of clip N + first ${after}s of N+1 → .pgm_join_preview_NN_DELETE_ME.mp4"
+  echo "Player: ${player}"
   echo
 
   for (( i = 0; i < total_joins; i++ )); do
     join_num=$(( i + 1 ))
     ord="$(pgm_ordinal_seam_label "$join_num")"
     gap_note=$(pgm_format_gap_to_next_note "${files[i]}" "${files[i + 1]}" 2>/dev/null) || gap_note=""
+    keep_preview=0
 
     echo "--- ${ord} join (${join_num} of ${total_joins}) ---"
     echo "  ${files[i]##*/} | ${files[i + 1]##*/}"
     [[ -n "$gap_note" ]] && echo "  ${gap_note}"
-    echo "  [Y] Play this join (${before}s end + ${after}s start) (default)"
+    echo "  [Y] Build & play this join (${before}s + ${after}s stitch) (default)"
     echo "  [n] Skip this join"
     echo "  [a] Skip all remaining joins"
     echo "  [s] Never preview joins for the rest of this run"
@@ -2158,17 +2297,21 @@ prompt_pre_merge_join_previews() {
     case "$choice" in
       y)
         while true; do
+          keep_preview=0
           play_pre_merge_join_preview_once "$player" \
-            "${files[i]}" "${files[i + 1]}" "$join_num" "$total_joins" "$ord"
+            "${files[i]}" "${files[i + 1]}" "$join_num" "$total_joins" "$ord" || true
           echo "  [y] Repeat ${ord} join preview"
-          echo "  [N] Continue (default)"
+          echo "  [N] Continue — delete DELETE_ME stitch (default)"
           echo "  [a] Skip all remaining joins"
           echo "  [s] Never preview joins for the rest of this run"
           echo "  [q] Quit"
           pgm_read_key_choice "Repeat ${ord} join preview? [y/N/a/s/q]: " n "ynasq"
           choice="$REPLY"
           case "$choice" in
-            y) continue ;;
+            y)
+              keep_preview=1
+              continue
+              ;;
             n) break ;;
             a)
               echo "$(pgm_ts) Skipping remaining joins."
@@ -2181,9 +2324,15 @@ prompt_pre_merge_join_previews() {
               skip_rest=1
               break
               ;;
-            q) return 2 ;;
+            q)
+              pgm_join_preview_cleanup
+              return 2
+              ;;
           esac
         done
+        if (( ! keep_preview )); then
+          pgm_join_preview_cleanup
+        fi
         ;;
       n) ;;
       a)
@@ -2196,11 +2345,15 @@ prompt_pre_merge_join_previews() {
         skip_rest=1
         ;;
       q)
+        pgm_join_preview_cleanup
         return 2
         ;;
     esac
+    # Leaving this join: always drop the stitch (repeat only keeps within the y-loop).
+    pgm_join_preview_cleanup
     (( skip_rest )) && break
   done
+  pgm_join_preview_cleanup
   echo
   return 0
 }
