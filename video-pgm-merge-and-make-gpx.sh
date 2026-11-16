@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.222100 - join preview Repeat menu: add Quit
 # v. 20261116.221800 - join preview repeat: don't capture build in $(); keep DELETE_ME for replay
 # v. 20261116.215000 - output-times arrow menu: align label and date columns
 # v. 20261116.155200 - fix hybrid cache clear typo; Contour progress once per file; align i/n columns
@@ -2564,11 +2565,18 @@ prompt_pre_merge_join_previews() {
       echo
       pgm_arrow_menu n \
         "y|Repeat" \
-        "n|Continue"
+        "n|Continue" \
+        "q|Quit"
       choice="$REPLY"
       case "$choice" in
         y) continue ;;
-        n) break ;;
+        q)
+          pgm_join_preview_cleanup
+          trap video_merge_ctrl_c INT
+          echo "$(pgm_ts) Quit."
+          return 2
+          ;;
+        n|*) break ;;
       esac
     done
     pgm_join_preview_cleanup
