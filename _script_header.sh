@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.143700 - shared terminal colors: ask Use colors?, green questions, highlight (default)
 # v. 20261115.200000 - SUMMARY helpers: Script + Version identity; Family-A begin/end chrome
 # v. 20261021.210400 - Usage/help use script_live_basename from _script_self_update.sh
 # v. 20261021.143500 - after seal, keep CALLER_SCRIPT* / $0 as the live script (not .deleteme.*.seal.*)
@@ -7,12 +8,15 @@
 # v. 20261020.202500 - self-update: watch live bin/ path (copy overwrite), not git checkout alone
 # v. 20261020.202200 - source _script_self_update.sh: detect on-disk script replace while running
 # v. 20260916.130951 - print_version_banner: draw box rules with sed; tr truncated ─ to one invalid byte
-# v. 20260811.095711 - print_script_history: paged --history from caller changelog header
+# v. 20260811.095711 - print_script_history: paged --history from caller changelog heade
 # v. 20260731.211609 - ask before apt install (default Y, no timeout); no silent auto-install
 # v. 20260722.084451 - let scripts continue with plain banners when optional boxes or figlet installation fails
 # v. 20260716.173600 - print_version_banner uses CALLER_SCRIPT version fields
 # v. 20260716.163300 - versioning v. YYYYMMDD.HH24MISS; parse first # v. YYYYMMDD.HHMMSS line
 
+# 2026.11.16 - v. 1.68.143700 - Shared interactive colors: SCRIPT_USE_COLORS, script_ask_colors,
+#                        script_print_question, script_echo_option (green "(default)"), script_printf_prompt.
+#                        Scripts set SCRIPT_TS_FN to their timestamp helper and call script_ask_colors after the banner.
 # 2026.11.15 - v. 1.67.200000 - script_summary_begin/end + script_summary_print_identity for shared
 #                        end-of-run SUMMARY chrome (Script + Version at top)
 # 2026.10.21 - v. 1.66.210400 - script_live_basename lives in _script_self_update.sh; help/Usage should call it
@@ -30,13 +34,13 @@
 # 2026.07.15 - v. 1.57.210401 - export profile_location_dir (default: $HOME or /root)
 # 2026.07.05 - v. 1.57.210400 - fix caller script detection (BASH_SOURCE[1] was _script_header.sh inside function)
 # 2026.06.27 - v. 1.56 - prompts: timestamp only; script version stays in window title (not script_version_in_prompt)
-# 2026.06.18 - v. 1.55 - PuTTY/window title: script version at front of title bar
-# 2026.06.18 - v. 1.54 - resolve caller script via BASH_SOURCE; export SCRIPT_VERSION_NUMBER; PuTTY title + prompt helper
+# 2026.06.18 - v. 1.55 - PuTTY/window title: script version at front of title ba
+# 2026.06.18 - v. 1.54 - resolve caller script via BASH_SOURCE; export SCRIPT_VERSION_NUMBER; PuTTY title + prompt helpe
 # 2026.06.02 - v. 1.53 - accept --no_startup_delay as alias for NO_STARTUP_DELAY (skip random delay when sourced with that flag)
 # 2026.04.21 - v. 1.52 - ctrl_c STY guard; quote $0 in version/tty; year-agnostic changelog grep; -n STY; indent; contract blurb
 # 2025.10.28 - v. 1.51- now we set LC_ALL for scripts to have proper separators in numbers (like ,.)
 # 2023.10.10 - v. 1.5 - bugfix: removed hardcoded HEALTHCHECKS_FILE
-# 2023.05.22 - v. 1.4 - added printing of the script name, added NO_STARTUP_DELAY startup parameter
+# 2023.05.22 - v. 1.4 - added printing of the script name, added NO_STARTUP_DELAY startup paramete
 # 2023.04.11 - v. 1.3 - added printing of the script name
 # 2023.02.17 - v. 1.2 - added SCRIPT_VERSION env variable
 # 2023.02.10 - v. 1.1 - changed check_if_installed with the option to provide the package name to be installed
@@ -208,7 +212,7 @@ script_summary_rule() {
 # Optional $1 = label column width (default 22).
 script_summary_print_identity() {
   local width="${1:-22}"
-  local name ver
+  local name ve
 
   if declare -F script_live_basename >/dev/null 2>&1; then
     name="$(script_live_basename)"
@@ -238,7 +242,7 @@ script_summary_end() {
 }
 
 # Changelog lines from the caller script header (new # v. YYYYMMDD… and old # YYYY.MM.DD - v. …).
-# Lenient: other # comments and blank lines in the preamble are skipped so mid-header
+# Lenient: other # comments and blank lines in the preamble are skipped so mid-heade
 # notes do not truncate the list; the first non-comment code line ends the scan.
 script_collect_history_lines() {
   local script="${1:-${CALLER_SCRIPT:-}}"
@@ -484,7 +488,7 @@ fi
 # trap ctrl-c and call ctrl_c()
 trap ctrl_c INT
 
-[[ -n "${profile_location_dir:-}" ]] && export profile_location_dir
+[[ -n "${profile_location_dir:-}" ]] && export profile_location_di
 
 export HEALTHCHECKS_FILE=/root/bin/healthchecks-ids.txt
 export return_code=123      # default placeholder; scripts set real exit code
@@ -536,3 +540,111 @@ else
   script_is_run_interactively=1
   echo "${SCRIPT_VERSION}" ; echo
 fi
+
+#######################################################################################
+# Shared terminal colors for interactive audio / media / video scripts.
+# Set SCRIPT_TS_FN to a timestamp function name (e.g. mfd_ts), then call script_ask_colors.
+#######################################################################################
+SCRIPT_USE_COLORS=0
+SCRIPT_C_G=""
+SCRIPT_C_0=""
+# Optional: name of a zero-arg function that prints "[ YYYY.MM.DD HH:MM:SS ]"
+SCRIPT_TS_FN="${SCRIPT_TS_FN:-}"
+
+script_colors_init() {
+  SCRIPT_C_G=""
+  SCRIPT_C_0=""
+  if (( SCRIPT_USE_COLORS )) && [[ -t 1 ]] && [[ -z "${NO_COLOR:-}" ]]; then
+    SCRIPT_C_G=$'\033[32m'
+    SCRIPT_C_0=$'\033[0m'
+  else
+    SCRIPT_USE_COLORS=0
+  fi
+}
+
+script_ts_now() {
+  if [[ -n "${SCRIPT_TS_FN:-}" ]] && declare -F "${SCRIPT_TS_FN}" >/dev/null 2>&1; then
+    "${SCRIPT_TS_FN}"
+  else
+    date '+[ %Y.%m.%d %H:%M:%S ]'
+  fi
+}
+
+# Timestamp (normal) + question text (green when colors on).
+script_print_question() {
+  if (( SCRIPT_USE_COLORS )); then
+    printf '%s %s%s%s\n' "$(script_ts_now)" "$SCRIPT_C_G" "$*" "$SCRIPT_C_0"
+  else
+    printf '%s %s\n' "$(script_ts_now)" "$*"
+  fi
+}
+
+# Menu option line; highlight "(default)" / related markers in green when colors are on.
+script_echo_option() {
+  local line="$*"
+  if (( SCRIPT_USE_COLORS )); then
+    if [[ "$line" == *'(default)'* ]]; then
+      line="${line//(default)/${SCRIPT_C_G}(default)${SCRIPT_C_0}}"
+    elif [[ "$line" == *'(oldest - default)'* ]]; then
+      line="${line//(oldest - default)/${SCRIPT_C_G}(oldest - default)${SCRIPT_C_0}}"
+    elif [[ "$line" == *', default)'* ]]; then
+      line="${line//, default)/, ${SCRIPT_C_G}default${SCRIPT_C_0})}"
+    elif [[ "$line" == *' is the default'* ]]; then
+      line="${line// is the default/${SCRIPT_C_G} is the default${SCRIPT_C_0}}"
+    fi
+  fi
+  printf '%s\n' "$line"
+}
+
+# Timestamp (normal) + prompt (green) for single-key reads (no newline).
+script_printf_prompt() {
+  local prompt="$*"
+  if (( SCRIPT_USE_COLORS )); then
+    printf '%s %s%s%s' "$(script_ts_now)" "$SCRIPT_C_G" "$prompt" "$SCRIPT_C_0"
+  else
+    printf '%s %s' "$(script_ts_now)" "$prompt"
+  fi
+}
+
+# Ask once. Default Yes. Pass 1 as $1 when -y / non-interactive should skip (colors off).
+# Returns via exit 0 on Quit. Sets SCRIPT_USE_COLORS and color codes.
+script_ask_colors() {
+  local do_yes="${1:-0}" answer="" discard drained=0
+  SCRIPT_USE_COLORS=0
+  script_colors_init
+  if (( do_yes )) || (( ! script_is_run_interactively )); then
+    return 0
+  fi
+  if [[ ! -t 1 || ! -t 0 ]] || [[ -n "${NO_COLOR:-}" ]]; then
+    return 0
+  fi
+  SCRIPT_USE_COLORS=1
+  script_colors_init
+  echo
+  script_print_question "Use colors in the terminal?"
+  script_echo_option "  [Y] / [1] Yes (default)"
+  echo "  [n] / [2] No"
+  echo "  [q] Quit"
+  script_printf_prompt "Use colors? [Y/n/q or 1/2]: "
+  while (( drained < 256 )) && IFS= read -r -t 0.02 -n 1 discard; do
+    ((++drained)) || true
+  done
+  read -n 1 answer || answer=""
+  echo
+  answer="${answer,,}"
+  case "$answer" in
+    ""|y|1) SCRIPT_USE_COLORS=1 ;;
+    n|2) SCRIPT_USE_COLORS=0 ;;
+    q)
+      echo "$(script_ts_now) Quit."
+      return_code=0
+      if [[ -f "${profile_location_dir:-$HOME}/bin/_script_footer.sh" ]]; then
+        # shellcheck disable=SC1090
+        . "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
+      fi
+      exit 0
+      ;;
+    *) SCRIPT_USE_COLORS=1 ;;
+  esac
+  script_colors_init
+}

@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.143700 - highlight (default) via shared script_echo_option; sync SCRIPT_USE_COLORS
 # v. 20261116.135500 - yn prompts: [1]=Yes [2]=No alongside Y/N; colors menu shows 1/2
 # v. 20261115.200000 - SUMMARY: Family-A chrome + Script/Version at top
 # v. 20261111.210000 - normalize: live progress bar (ffmpeg -progress) like video-pgm-timelapse
@@ -22,7 +23,7 @@
 # v. 20260802.224401 - fix aac "Unsupported channel layout 6 channels" (pin unspecified layouts)
 # v. 20260801.162132 - GoPro order: swap trak boxes in moov (ffmpeg cannot copy or reorder tmcd)
 # v. 20260801.161802 - fix pass3 handler metadata quoting (GoPro TCD was parsed as output file)
-# v. 20260801.161343 - GoPro: pass2 MET-only then pass3 swap data streams for TCD/MET order
+# v. 20260801.161343 - GoPro: pass2 MET-only then pass3 swap data streams for TCD/MET orde
 # v. 20260801.161139 - GoPro pass2: MOV intermediate (tmcd copies to MOV, then remux MP4)
 # v. 20260801.160914 - GoPro: two-pass remux with handler TCD map + ffprobe order verify
 # v. 20260801.160042 - GoPro: single-pass tmcd+MET (-tag:d tmcd); drop broken two-pass remux
@@ -68,7 +69,7 @@
 # 2026.06.24 - v. 0.5.39 - scan: optional middle-window sample % for files > 200 MiB (default 100% = full)
 # 2026.06.23 - v. 0.5.38 - interactive prompts: default no timeout (wait forever); --timeout / LOUDNESS_READ_TIMEOUT
 # 2026.06.23 - v. 0.5.37 - startup: print ffmpeg path and version
-# 2026.06.18 - v. 0.5.36 - PuTTY/window title: script version at front of title bar
+# 2026.06.18 - v. 0.5.36 - PuTTY/window title: script version at front of title ba
 # 2026.06.18 - v. 0.5.35 - interactive prompts: include script version in timestamp prefix (PuTTY)
 # 2026.06.18 - v. 0.5.34 - run summary: no [timestamp] prefix on summary lines
 # 2026.06.18 - v. 0.5.33 - end-of-run and Ctrl-C summary (timing, scan/normalize stats)
@@ -105,7 +106,7 @@
 # 2026.06.17 - v. 0.5.2 - CLI flags skip startup/wizard prompts on a TTY (-y batch)
 # 2026.06.17 - v. 0.5.1 - Ctrl-C: remove temp output, restore *.backup.deleteme if moved aside
 # 2026.06.17 - v. 0.5.0 - --print-cli-only; window title [cwd] script argv; prompt timestamps
-# 2026.06.17 - v. 0.4.5 - normalize queue processed in alphabetical order
+# 2026.06.17 - v. 0.4.5 - normalize queue processed in alphabetical orde
 # 2026.06.17 - v. 0.4.4 - interactive backup conflict: replace, keep, or skip
 # 2026.06.16 - v. 0.4.3 - per-file [D] normalize rest of directory (was [R] rest of batch)
 # 2026.06.16 - v. 0.4.2 - prompt timestamps in square brackets for readability
@@ -118,7 +119,7 @@
 # 2026.06.16 - v. 0.3.8 - normalize all audio tracks; copy video, subtitles, metadata, other streams
 # 2026.06.16 - v. 0.3.7 - fix MP4 normalize: map streams, re-encode audio (aac); show ffmpeg errors
 # 2026.06.16 - v. 0.3.6 - offer normalize for NORMAL and TOO_QUIET; skip only PERFECT
-# 2026.06.16 - v. 0.3.5 - after normalize: print max/mean volume before and after
+# 2026.06.16 - v. 0.3.5 - after normalize: print max/mean volume before and afte
 # 2026.06.16 - v. 0.3.4 - FILE column capped at 150 chars (shorter when names are shorter)
 # 2026.06.16 - v. 0.3.3 - startup “offer normalize after scan?” defaults to yes
 # 2026.06.16 - v. 0.3.2 - scan table: right-align MAX/MEAN dB columns (decimal aligned, not minus)
@@ -174,7 +175,7 @@ Arguments that are not options choose what is scanned. Each one is:
                        Other files are skipped, with one summary note.
   an existing folder   Media files in that folder. --scope subdirs also
                        enters its subfolders; otherwise only the folder itself.
-  a mask (* ? or [)    Used when that argument is not an existing file or
+  a mask (* ? or [)    Used when that argument is not an existing file o
                        folder (quote it so the shell does not expand it).
                        Matched case-insensitively. Without "/", the mask
                        matches the file name at any depth in the scope;
@@ -210,11 +211,11 @@ Normalization (non-PERFECT by default; PERFECT is never offered for standard mod
 
 Video files: loudnorm on every audio track; video, subtitles, chapters, metadata,
 and other non-audio streams are copied. Audio is re-encoded (AAC for MP4/MKV, etc.).
-Audio tracks with an unspecified channel layout are pinned to the default layout for
+Audio tracks with an unspecified channel layout are pinned to the default layout fo
 their channel count; the native aac encoder rejects layouts like "6 channels".
 If the normalized file measures a lower mean than the original, the change is pointless
 and gets reverted from the backup (needs --save-original) and counted as "reverted".
-MP4: streams are mapped by index; unmappable data (tmcd, MPEG-4 Systems mp4s, other
+MP4: streams are mapped by index; unmappable data (tmcd, MPEG-4 Systems mp4s, othe
 codec-id-0 bin_data) is skipped so the muxer does not fail with tag errors.
 GoPro MP4: pass1 loudnorm v/a; pass2 remuxes MET from source and lets ffmpeg rebuild the
 timecode track; a final moov trak swap restores TCD at #2 and MET at #3.
@@ -263,7 +264,7 @@ Options:
                        arguments still limit what is measured.
   --scan-percent N     Fraction of each large file to measure (1–100; default 100).
                        Values below 100 scan the middle portion only (e.g. 50 scans
-                       from 25% to 75% of duration). Applies only to files larger
+                       from 25% to 75% of duration). Applies only to files large
                        than --scan-percent-min-mb; smaller files are always full.
   --scan-percent-min-mb N
                        Size threshold in MiB for partial scan (default 200).
@@ -444,7 +445,7 @@ while [[ $# -gt 0 ]]; do
       exit 0
       ;;
     -v|--version)
-      print_version_banner
+      print_version_banne
       exit 0
       ;;
     --history)
@@ -752,6 +753,14 @@ loudness_init_colors() {
     BOLD=''
     RESET=''
   fi
+  if declare -F script_colors_init >/dev/null 2>&1; then
+    if loudness_colors_enabled; then
+      SCRIPT_USE_COLORS=1
+    else
+      SCRIPT_USE_COLORS=0
+    fi
+    script_colors_init
+  fi
 }
 
 loudness_print_question() {
@@ -796,7 +805,7 @@ prompt_use_colors() {
     loudness_init_colors
   fi
   loudness_print_question 'Use colors in the terminal?'
-  echo '  [Y] / [1] Yes (default)'
+  script_echo_option '  [Y] / [1] Yes (default)'
   echo '  [n] / [2] No'
   echo '  [q] Quit'
   loudness_read_yn_key 'Use colors? [Y/n/q or 1/2]: ' Y
@@ -815,6 +824,14 @@ prompt_use_colors() {
   fi
   if [[ "$LOUDNESS_USE_COLORS" == no ]]; then
     cli_equiv_note 'CLI: --colors no'
+  fi
+  if declare -F script_colors_init >/dev/null 2>&1; then
+    if [[ "$LOUDNESS_USE_COLORS" == yes ]]; then
+      SCRIPT_USE_COLORS=1
+    else
+      SCRIPT_USE_COLORS=0
+    fi
+    script_colors_init
   fi
 }
 
@@ -1282,7 +1299,7 @@ collect_normalize_choices_cli_only() {
 run_print_cli_only_session() {
   local rc=0
 
-  loudness_print_cli_only_banner
+  loudness_print_cli_only_banne
 
   if (( ${#MEDIA_FILES[@]} == 0 )); then
     loudness_print_no_media_message
@@ -1402,7 +1419,7 @@ loudness_scan_scope_label() {
 # Command line that reproduces this run: flags given plus the wizard answers.
 # Per-file choices are not included (those are what --print-cli-only records).
 loudness_print_run_settings_equivalent_cli() {
-  local cmd="" out="" p q_dir
+  local cmd="" out="" p q_di
   local -a parts=()
 
   if declare -F script_live_basename >/dev/null 2>&1; then
@@ -1589,7 +1606,7 @@ loudness_print_run_settings() {
 prompt_scan_scope() {
   (( PRINT_CLI_ONLY )) && loudness_print_cli_only_section 'Scan scope'
   loudness_print_question 'What should be scanned?'
-  echo '  [S] Also subdirectories (default)'
+  script_echo_option '  [S] Also subdirectories (default)'
   echo '  [c] Current directory only'
   echo '  [q] Quit'
   loudness_read_key 'Scan scope? [S/c/q]: ' S
@@ -1849,7 +1866,7 @@ prompt_exclude_interactive() {
   (( PRINT_CLI_ONLY )) && loudness_print_cli_only_section 'Exclude'
   echo "$(loudness_prompt_ts) Found $(loudness_media_files_scan_summary) ($(loudness_found_source_note))"
   loudness_print_question 'Exclude any of these files?'
-  echo '  [Enter] None (default) — scan every file listed above'
+  script_echo_option '  [Enter] None (default) — scan every file listed above'
   echo '  masks   Case-insensitive globs, separated by ;   e.g. *Proxy*;backup/*'
   echo '          No "/" matches the file name; "/" matches the relative path (* crosses "/")'
   echo '  [q/e]   Quit'
@@ -2267,7 +2284,7 @@ loudness_scan_window_for_file() {
   local percent="${LOUDNESS_SCAN_PERCENT:-100}"
   local min_bytes="${LOUDNESS_SCAN_PERCENT_MIN_BYTES:-0}"
   local min_scan_sec="${LOUDNESS_SCAN_PARTIAL_MIN_SEC:-1}"
-  local sz dur
+  local sz du
 
   (( percent < 100 )) || return 1
   loudness_file_is_mpegts "$file" && return 1
@@ -3404,7 +3421,7 @@ loudness_progress_eta_phrase() {
   remain="$(awk -v e="$elapsed" -v t="$total" -v s="$spd" 'BEGIN {
     r = (t - e) / s
     if (r < 0) r = 0
-    printf "%.3f", r
+    printf "%.3f", 
   }')"
   printf 'left %s  %s' "$(loudness_progress_eta_left "$remain")" "$(loudness_progress_eta_arrival "$remain")"
 }
@@ -3868,7 +3885,7 @@ resolve_backup_conflict() {
   echo '      (the previous original in .original-backup.<ext> will be deleted)'
   echo '  [k] Keep old backup; normalize current file in place'
   echo '      (safe for re-normalizing; backup still holds the first original)'
-  echo '  [S] Skip this file (default)'
+  script_echo_option '  [S] Skip this file (default)'
   echo '  [q] Quit'
   loudness_read_key "Backup conflict for ${file}? [y/k/S/q]: " S
   case "${REPLY^^}" in
@@ -3985,7 +4002,7 @@ normalize_load_stream_table() {
   local file="$1"
   local -a fp_args=()
   local -A seen_idx=()
-  local idx ctype cname ctag handler
+  local idx ctype cname ctag handle
 
   NORMALIZE_STREAM_TABLE=()
 
@@ -3995,7 +4012,7 @@ normalize_load_stream_table() {
 
   loudness_ffprobe_input_opts_for_file "$file" fp_args
   fp_args+=(
-    -v error
+    -v erro
     -show_entries stream=index
     -of csv=p=0
     -- "$file"
@@ -4062,7 +4079,7 @@ normalize_stream_is_gopro_met() {
 # Only worth two passes when a MET/gpmd stream exists: a single loudnorm pass drops it.
 normalize_file_should_gopro_two_pass() {
   local src="$1" dest="$2"
-  local mp4_family=0 line idx ctype cname ctag handler
+  local mp4_family=0 line idx ctype cname ctag handle
 
   normalize_output_is_mp4_family "$dest" && mp4_family=1
   if ! (( mp4_family )); then
@@ -4171,7 +4188,7 @@ normalize_build_mp4_ffmpeg_args() {
   local -n out_map=$1
   local -n out_tag=$2
   local gopro_tags="${3:-0}"
-  local line idx ctype cname ctag handler
+  local line idx ctype cname ctag handle
   local data_n=0
 
   out_map=(-copy_unknown)
@@ -4219,7 +4236,7 @@ normalize_print_mux_note() {
 normalize_build_gopro_pass2_met_only_args() {
   local -n out_map=$1
   local -n out_tag=$2
-  local line idx ctype cname ctag handler data_n=0 mux_handler
+  local line idx ctype cname ctag handler data_n=0 mux_handle
 
   out_map=(-copy_unknown -map 1:v -map 1:a)
   out_tag=()
@@ -4409,7 +4426,7 @@ normalize_file_inplace_gopro_two_pass() {
 
   if ! normalize_gopro_mp4_stream_order_ok "$tmp"; then
     if normalize_gopro_mp4_stream_order_swapped "$tmp"; then
-      NORMALIZE_GOPRO_PASS2_STRATEGY=trak_reorder
+      NORMALIZE_GOPRO_PASS2_STRATEGY=trak_reorde
       normalize_print_mux_note
       normalize_gopro_reorder_trak_boxes "$tmp" || true
     fi
@@ -4437,7 +4454,7 @@ normalize_build_ffmpeg_stream_map_args() {
   local src_file="$1" container_ref="$2"
   local -n out_map=$3
   local -n out_tag=$4
-  local line idx ctype cname ctag handler
+  local line idx ctype cname ctag handle
   local mp4_family=0
 
   out_map=()
@@ -5173,7 +5190,7 @@ scan_media_files_with_report() {
   NORMALIZE_STATUS=()
 
   init_report_column_widths
-  print_report_table_header
+  print_report_table_heade
   LOUDNESS_SCAN_RAN=1
 
   for file in "${MEDIA_FILES[@]}"; do
@@ -5295,7 +5312,7 @@ prompt_normalize_mode() {
     echo "No files available for normalization with selected classes."
   fi
   echo "  [s] Standard loudnorm"
-  echo "  [Y] YouTube-style loudnorm (I=-16:TP=-1.0:LRA=11) (default)"
+  script_echo_option "  [Y] YouTube-style loudnorm (I=-16:TP=-1.0:LRA=11) (default)"
   echo "  [n] Skip normalization"
   echo "  [q] Quit"
   loudness_read_key 'Normalize? [s/Y/n/q]: ' Y
@@ -5406,7 +5423,7 @@ loudness_read_normalize_batch_choice() {
   fi
 
   if [[ "$default" == 'Y' ]]; then
-    echo '  [Y] Yes normalize (default)'
+    script_echo_option '  [Y] Yes normalize (default)'
     echo '  [n] No'
     echo "  [d] Yes, and rest of directory ($(dirname -- "$file")/) without further prompts"
     echo '  [a] Yes for all remaining in this batch'
@@ -5417,7 +5434,7 @@ loudness_read_normalize_batch_choice() {
     loudness_read_yn_key "$prompt" Y
   else
     echo '  [y] Yes normalize'
-    echo '  [N] No (default)'
+    script_echo_option '  [N] No (default)'
     echo "  [d] Yes, and rest of directory ($(dirname -- "$file")/) without further prompts"
     echo '  [a] Yes for all remaining in this batch'
     echo '  [f] Finish batch now (normalize selected only; stop asking for rest of batch)'
@@ -5550,7 +5567,7 @@ loudness_rollback_stamp_from_session() {
 }
 
 loudness_rollback_ensure_script() {
-  local stamp dir
+  local stamp di
   [[ -n "$LOUDNESS_ROLLBACK_PATH" && -f "$LOUDNESS_ROLLBACK_PATH" ]] && return 0
   stamp="$(loudness_rollback_stamp_from_session)"
   dir="$LOUDNESS_INVOCATION_CWD"

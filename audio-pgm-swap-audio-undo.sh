@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.143700 - highlight (default) via shared script_echo_option; sync SCRIPT_USE_COLORS
 # v. 20261116.135500 - yn prompts: [1]=Yes [2]=No alongside Y/N; colors menu shows 1/2
 # v. 20261115.200000 - SUMMARY: Family-A chrome + Script/Version at top
 # v. 20261015.184100 - only the default key is a capital in the roll-back question
@@ -131,6 +132,14 @@ un_colors() {
     C_R=$'\e[31m'
     C_C=$'\e[36m'
     C_0=$'\e[0m'
+  fi
+  if declare -F script_colors_init >/dev/null 2>&1; then
+    if [[ "$USE_COLORS" == yes && -t 1 && -z "${NO_COLOR:-}" ]]; then
+      SCRIPT_USE_COLORS=1
+    else
+      SCRIPT_USE_COLORS=0
+    fi
+    script_colors_init
   fi
 }
 
@@ -283,7 +292,7 @@ un_ask_colors() {
   un_colors
   echo
   un_print_question "Use colors in the terminal?"
-  echo "  [Y] / [1] Yes (default)"
+  script_echo_option "  [Y] / [1] Yes (default)"
   echo "  [n] / [2] No"
   echo "  [q] Quit"
   un_read_key "Use colors? [Y/n/q or 1/2]: " y "Yes (use colors)"
@@ -317,7 +326,7 @@ un_process_one() {
   if (( ! DO_YES )) && (( ! APPLY_REST )) && (( script_is_run_interactively )); then
     echo
     un_print_question "Roll back this file?"
-    echo "  [Y] Yes (default) — put the original back as ${orig##*/}"
+    script_echo_option "  [Y] Yes (default) — put the original back as ${orig##*/}"
     echo "  [s] Skip this file"
     echo "  [a] Yes, and the same for every remaining file"
     echo "  [q] Quit"

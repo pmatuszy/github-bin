@@ -1,5 +1,6 @@
 #!/bin/bash
-# v. 20261115.115000 - drop Write i/n line; (i/n) already on exiftool bar
+# v. 20261116.143700 - ask Use colors?; green questions / prompts; highlight (default)
+# v. 20261115.115000 - drop Write i/n line; (i/n) already on exiftool ba
 # v. 20261115.104500 - pre-scan progress bar (i/n + %)
 # v. 20261115.103000 - pre-scan: batch only files that still need a decision
 # v. 20261115.102500 - drop Files bar; show i/n on the live exiftool line
@@ -14,12 +15,14 @@
 # v. 20261115.091000 - Contour profile is Contour+2 only (drop ROAM/GPS generics)
 # v. 20261115.090000 - initial: set Make/Model/Comment camera profiles (Contour, GoPro, 70mai, custom)
 #
-# 2026.11.15 - v. 0.1.12 - drop separate Write i/n line; file index lives only on the exiftool bar
+# 2026.11.16 - v. 0.1.13 - Ask Use colors? at startup (default Yes); green question/prompt text;
+#   highlight "(default)" on menu lines (shared _script_header helpers).
+# 2026.11.15 - v. 0.1.12 - drop separate Write i/n line; file index lives only on the exiftool ba
 # 2026.11.15 - v. 0.1.12 - SUMMARY prints Script + Version at the top (shared identity helper)
 # 2026.11.15 - v. 0.1.11 - pre-scan shows a live progress bar (pct + i/n + filename)
-# 2026.11.15 - v. 0.1.10 - pre-scan after profile choice; batch size / Question X of Y cover
+# 2026.11.15 - v. 0.1.10 - pre-scan after profile choice; batch size / Question X of Y cove
 #   only files that still need a decision (already-tagged counted once, not as batch slots)
-# 2026.11.15 - v. 0.1.9 - apply progress: Write i/n line + (i/n) on exiftool bar; remove Files bar
+# 2026.11.15 - v. 0.1.9 - apply progress: Write i/n line + (i/n) on exiftool bar; remove Files ba
 # 2026.11.15 - v. 0.1.8 - SUMMARY Timing: Started / Finished / wall / processing / prompt-wait
 # 2026.11.15 - v. 0.1.7 - apply phase: files bar + exiftool % from *_exiftool_tmp; key lists keep
 #   distinct K vs k (rest-of-run Keep)
@@ -29,7 +32,7 @@
 # 2026.11.15 - v. 0.1.4 - camera profile menu has no default; Enter asks again (was silently Contour+2)
 # 2026.11.15 - v. 0.1.3 - process in batches: ask all decisions for a batch first, then write;
 #   prompt for batch size (default = all when ≤50 files, else 50); Ctrl-C during a write stops
-#   exiftool and removes that file's *_exiftool_tmp leftover
+#   exiftool and removes that file's *_exiftool_tmp leftove
 # 2026.11.15 - v. 0.1.2 - if Make/Model/Comment already filled but do not match the profile, ask: overwrite [Y], merge empty fields only [m], keep [k], overwrite rest-of-run [a], keep-existing rest-of-run [K]; -y only tags fully empty files (keeps differing existing tags)
 # 2026.11.15 - v. 0.1.1 - Contour preset is Contour+2 Camera only (Make=Contour Model=Contour+2); removed Contour / ROAM / GPS generics
 # 2026.11.15 - v. 0.1 - initial release: tag video files with camera identity (Make, Model,
@@ -50,9 +53,9 @@ Usage: $(script_live_basename) [-h|--help] [-v|--version] [--history]
        [--batch-size N] [--camera PROFILE]
        [FILE|DIR ...]
 
-Write camera identity into video metadata (Make, Model, Comment) so other
+Write camera identity into video metadata (Make, Model, Comment) so othe
 scripts can detect Contour+2 / GoPro / 70mai without guessing from the file
-name alone. Exact matches are skipped. If tags are already filled but differ
+name alone. Exact matches are skipped. If tags are already filled but diffe
 from the profile, you are asked what to do (overwrite / merge empties / keep).
 
 Work is batched: for each batch the script asks every decision first, then
@@ -87,12 +90,12 @@ Options:
   --make TEXT          Custom Make (implies --camera custom when set with --model).
   --model TEXT         Custom Model.
 
-Interactive keys (per file, when not -y) — decisions only; writes run after
+Interactive keys (per file, when not -y) — decisions only; writes run afte
 the batch's questions:
   Empty tags:
   [Y] Apply this file (default)
   [a] Overwrite/apply this and every later file
-  [b] Begin apply now — write answers so far; ask the rest later
+  [b] Begin apply now — write answers so far; ask the rest late
   [n] Skip this file
   [q] Quit (abandons unapplied plans for the current batch)
 
@@ -102,7 +105,7 @@ the batch's questions:
   [k] Keep current tags on this file
   [a] Overwrite this and every later file that differs
   [K] Keep existing tags for the rest of this run (only tag fully empty files)
-  [b] Begin apply now — write answers so far; ask the rest later
+  [b] Begin apply now — write answers so far; ask the rest late
   [n] Skip this file
   [q] Quit (abandons unapplied plans for the current batch)
 
@@ -186,7 +189,11 @@ scm_read_key() {
     REPLY="$default"
     return 0
   fi
-  printf '%s %s' "$(scm_ts)" "$prompt"
+  if declare -F script_printf_prompt >/dev/null 2>&1; then
+    script_printf_prompt "$prompt"
+  else
+    printf '%s %s' "$(scm_ts)" "$prompt"
+  fi
   if [[ -t 0 ]]; then
     scm_prompt_wait_begin
     read -n 1 answer || answer=
@@ -854,7 +861,11 @@ scm_decide_file() {
   echo
   if (( has_existing )); then
     echo "  Tags are already filled but do not match ${SCM_CAMERA_LABEL}."
-    echo "  [$(scm_k y "$def")] Overwrite with ${SCM_CAMERA_LABEL} (default)"
+    if declare -F script_echo_option >/dev/null 2>&1; then
+      script_echo_option "  [$(scm_k y "$def")] Overwrite with ${SCM_CAMERA_LABEL} (default)"
+    else
+      echo "  [$(scm_k y "$def")] Overwrite with ${SCM_CAMERA_LABEL} (default)"
+    fi
     echo "  [$(scm_k m "$def")] Merge — fill only empty fields; keep non-empty Make/Model/Comment"
     echo "  [$(scm_k k "$def")] Keep current tags on this file"
     echo "  [$(scm_k a "$def")] Overwrite this and every later file that differs"
@@ -864,7 +875,11 @@ scm_decide_file() {
     echo "  [$(scm_k q "$def")] Quit (abandon this batch's pending writes)"
     keys="$(scm_keys "$def" y m k a K b n q)"
   else
-    echo "  [$(scm_k y "$def")] Apply this file (default)"
+    if declare -F script_echo_option >/dev/null 2>&1; then
+      script_echo_option "  [$(scm_k y "$def")] Apply this file (default)"
+    else
+      echo "  [$(scm_k y "$def")] Apply this file (default)"
+    fi
     echo "  [$(scm_k a "$def")] Apply this file and every later file"
     echo "  [$(scm_k b "$def")] Begin apply now — write answers so far; ask remaining files later"
     echo "  [$(scm_k n "$def")] Skip this file"
@@ -1188,7 +1203,7 @@ while [[ $# -gt 0 ]]; do
       exit 0
       ;;
     -v|--version)
-      print_version_banner
+      print_version_banne
       exit 0
       ;;
     --history)
@@ -1287,7 +1302,12 @@ if [[ -f "${BASH_SOURCE[0]}" ]]; then
   chmod 700 "${BASH_SOURCE[0]}" 2>/dev/null || true
 fi
 
-print_version_banner
+print_version_banne
+
+SCRIPT_TS_FN=scm_ts
+if declare -F script_ask_colors >/dev/null 2>&1; then
+  script_ask_colors "$DO_YES"
+fi
 
 SCM_SCRIPT_START_EPOCH=$(date +%s)
 SCM_SCRIPT_START_STR="$(scm_wall_clock_now)"

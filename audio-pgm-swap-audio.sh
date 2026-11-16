@@ -1,8 +1,9 @@
 #!/bin/bash
+# v. 20261116.143700 - highlight (default) via shared script_echo_option; sync SCRIPT_USE_COLORS
 # v. 20261116.135500 - yn prompts: [1]=Yes [2]=No alongside Y/N; colors menu shows 1/2
 # v. 20261115.200000 - SUMMARY: Family-A chrome + Script/Version at top
 # v. 20261016.084500 - --default N marks that audio track as the one players use, without reordering
-# v. 20261016.081400 - after a swap, GoPro telemetry and timecode stay in their original order
+# v. 20261016.081400 - after a swap, GoPro telemetry and timecode stay in their original orde
 # v. 20261015.191843 - the move/write line is a short block: backup, write, audio, drop, subtitles, streams
 # v. 20261015.184100 - audio and subtitle plan arrows start in the same column
 # v. 20261015.183700 - each file is boxed with a start and end rule; compare columns are wider; only the default key is a capital
@@ -18,11 +19,11 @@
 # v. 20261014.221053 - ask one-by-one or together; the first file gets a full stream report
 # v. 20261014.220750 - the kept copy is named stem-backup.ext
 # v. 20261014.220133 - ask to keep the original (default yes); print a facts table before and after each swap
-# v. 20261014.213909 - swap audio tracks in a video; every other stream stays, in the same order
+# v. 20261014.213909 - swap audio tracks in a video; every other stream stays, in the same orde
 #
 # 2026.11.16 - v. 0.19 - On Y/n prompts, [1]=Yes and [2]=No (same as Y/N); colors/keep-copy menus show both.
-# 2026.10.16 - v. 0.18 - --default N keeps the audio order and marks audio track N as the default. Picture, telemetry and the other streams stay in their original order
-# 2026.10.16 - v. 0.17 - GoPro gpmd/MET is copied in place; tmcd cannot be stream-copied, so it is rebuilt and moved back beside telemetry in the original order
+# 2026.10.16 - v. 0.18 - --default N keeps the audio order and marks audio track N as the default. Picture, telemetry and the other streams stay in their original orde
+# 2026.10.16 - v. 0.17 - GoPro gpmd/MET is copied in place; tmcd cannot be stream-copied, so it is rebuilt and moved back beside telemetry in the original orde
 # 2026.10.15 - v. 0.16 - the move/write status is several short lines, not one long line
 # 2026.10.15 - v. 0.15 - the -> on the audio line and the subtitle line start in the same column
 # 2026.10.15 - v. 0.14 - a rule opens and closes each file; the input/output columns are 70 characters so a long name fits; only Y is capital in the swap question
@@ -100,7 +101,7 @@ clip.mp4, one file at a time).
 
 The first four questions (colors, keep a copy, one by one or together,
 matching subtitles) are asked before any file is opened. One by one is
-the default. Matching subtitles is Yes. Then the script searches for
+the default. Matching subtitles is Yes. Then the script searches fo
 videos and prints "Getting file info (1/8) name" while it reads streams. The first file prints a compact report: size, duration, times, what is
 present, each audio/video/subtitle line, and the swap plan. Later files
 keep the shorter table. After the
@@ -374,6 +375,14 @@ sa_colors() {
     C_C=$'\e[36m'
     C_0=$'\e[0m'
   fi
+  if declare -F script_colors_init >/dev/null 2>&1; then
+    if [[ "$USE_COLORS" == yes && -t 1 && -z "${NO_COLOR:-}" ]]; then
+      SCRIPT_USE_COLORS=1
+    else
+      SCRIPT_USE_COLORS=0
+    fi
+    script_colors_init
+  fi
 }
 
 sa_print_question() {
@@ -592,7 +601,7 @@ sa_load_streams() {
 }
 
 sa_gopro_label() {
-  local i tag handler
+  local i tag handle
   for i in "${!ST_IDX[@]}"; do
     tag="${ST_TAG[$i],,}"
     handler="${ST_HANDLER[$i]}"
@@ -628,7 +637,7 @@ sa_audio_order_text() {
 }
 
 sa_load_info() {
-  local file="$1" dur br
+  local file="$1" dur b
   sa_load_streams "$file"
   INFO_FILE="${file##*/}"
   INFO_SIZE="$(sa_human_size "$(sa_file_bytes "$file")")"
@@ -1953,7 +1962,7 @@ sa_ask_colors() {
   sa_colors
   echo
   sa_print_question "Use colors in the terminal?"
-  echo "  [Y] / [1] Yes (default)"
+  script_echo_option "  [Y] / [1] Yes (default)"
   echo "  [n] / [2] No"
   echo "  [q] Quit"
   sa_read_key "Use colors? [Y/n/q or 1/2]: " y "Yes (use colors)"
@@ -1978,7 +1987,7 @@ sa_ask_keep_copy() {
   fi
   echo
   sa_print_question "Keep a copy of each original file?"
-  echo "  [Y] / [1] Yes (default) — original becomes clip-backup.mp4; swapped file keeps the original name"
+  script_echo_option "  [Y] / [1] Yes (default) — original becomes clip-backup.mp4; swapped file keeps the original name"
   echo "      If clip-backup.mp4 is already there, a dated copy is added and that file is left as it is"
   echo "  [n] / [2] No — replace the original with the swapped file"
   echo "  [q] Quit"
@@ -2004,11 +2013,11 @@ sa_apply_together() {
 
 sa_ask_together() {
   if (( TOGETHER_SET )); then
-    (( TOGETHER )) && sa_apply_together
+    (( TOGETHER )) && sa_apply_togethe
     return 0
   fi
   if (( DO_YES )); then
-    sa_apply_together
+    sa_apply_togethe
     return 0
   fi
   if (( ! script_is_run_interactively )); then
@@ -2016,7 +2025,7 @@ sa_ask_together() {
   fi
   echo
   sa_print_question "Ask about each file, or swap them all the same way?"
-  echo "  [O] One by one (default)"
+  script_echo_option "  [O] One by one (default)"
   echo "  [t] Together — same audio order for every file"
   echo "  [q] Quit"
   sa_read_key "Ask file by file? [O/t/q]: " o "One by one"
@@ -2026,7 +2035,7 @@ sa_ask_together() {
       sa_print_selected "one by one"
       ;;
     t)
-      sa_apply_together
+      sa_apply_togethe
       sa_print_selected "together (same order for every file)"
       ;;
     q) sa_quit ;;
@@ -2044,7 +2053,7 @@ sa_ask_subtitles() {
   fi
   echo
   sa_print_question "Also swap subtitle tracks to the same languages as the audio?"
-  echo "  [Y] / [1] Yes (default) — Italian audio with Italian subtitles, and so on"
+  script_echo_option "  [Y] / [1] Yes (default) — Italian audio with Italian subtitles, and so on"
   echo "  [n] / [2] No — leave subtitle order as it is"
   echo "  [q] Quit"
   sa_read_key "Swap matching subtitles? [Y/n/q or 1/2]: " y "Yes — same language order as audio"
@@ -2167,7 +2176,7 @@ sa_ask_languages() {
   echo "  (audio and/or subtitles)."
   echo
   sa_print_question "Leave only English, Polish and German?"
-  echo "  [Y] Yes (default) — drop ${extra_txt}"
+  script_echo_option "  [Y] Yes (default) — drop ${extra_txt}"
   echo "  [c] Choose which languages to drop (you can pick more than one)"
   echo "  [k] Keep every language"
   echo "  [q] Quit"
@@ -2584,10 +2593,10 @@ sa_process_one_work() {
     echo
     if (( DEFAULT_SET )) && sa_slots_are_identity "$order" "$n"; then
       sa_print_question "Make audio track ${DEFAULT_AUDIO} the default?"
-      echo "  [Y] Yes, leave the track order (default)"
+      script_echo_option "  [Y] Yes, leave the track order (default)"
     else
       sa_print_question "Swap the audio in this file?"
-      echo "  [Y] Yes, order ${order} (default)"
+      script_echo_option "  [Y] Yes, order ${order} (default)"
     fi
     echo "  [o] Type a new audio order"
     echo "  [s] Skip this file"
@@ -2919,7 +2928,7 @@ SCRIPT_START_NS="$(sa_now_ns)"
 sa_require_ffmpeg
 sa_ask_colors
 sa_ask_keep_copy
-sa_ask_together
+sa_ask_togethe
 sa_ask_subtitles
 
 if (( ${#INPUT_ARGS[@]} == 0 )); then

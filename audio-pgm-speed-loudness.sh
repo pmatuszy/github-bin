@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261116.143700 - ask Use colors?; green prompts; highlight (default)
 # v. 20261115.200000 - SUMMARY: Family-A chrome + Script/Version at top
 # v. 20261006.183857 - directory listing uses /bin/ls so a shell ls function cannot add --full-time
 # v. 20260916.133341 - replace (PGM) speed/format lines with === Run settings === + Equivalent CLI
@@ -7,11 +8,11 @@
 # v. 20260810.190038 - summary: file sizes + move totals after per-file before/after block
 # v. 20260810.184417 - clarify duration-saved percent as "N% shorter than input"
 # v. 20260810.184308 - summary: show how much shorter output is vs total input duration
-# v. 20260810.184102 - summary: total input/output duration + average max/mean dB before/after
+# v. 20260810.184102 - summary: total input/output duration + average max/mean dB before/afte
 # v. 20260810.180157 - episode zero-pad only after single-key consent [y/N/q] (default N)
 # v. 20260810.175918 - zero-pad trailing _1.._9 before ext when multi-digit episodes exist
 # v. 20260810.175612 - create org/ only when moving a converted source (not on empty/decline)
-# v. 20260810.175506 - summary: input → output on first line, then before/after
+# v. 20260810.175506 - summary: input → output on first line, then before/afte
 # v. 20260810.175420 - before→after summary: before and after on separate lines
 # v. 20260810.175340 - omit redundant output path line in before→after summary
 # v. 20260810.173904 - drop redundant output basename on After: line
@@ -29,11 +30,13 @@
 # v. 20260810.160147 - pre-scan volumedetect table; before/after dB; end-of-run summary
 # v. 20260810.152506 - rename to audio-pgm-speed-loudness.sh (drop CURRENT-DIRECTORY suffix)
 # v. 20260810.152137 - add English rewrite: cwd atempo+speechnorm, fix find grouping, safe file loop
+# 2026.11.16 - v. 0.10 - Ask Use colors? at startup (default Yes); green prompts; highlight "(default)"
+#   (shared _script_header helpers).
 # 2026.10.06 - v. 0.9 - directory listing uses /bin/ls so a shell ls function cannot add --full-time
 # 2026.09.16 - v. 0.8 - startup: the two "(PGM) speed factor / output format" lines become a "=== Run settings ===" block that marks SPEED and -f/--format as given or default and adds an "Equivalent CLI:" line repeating the run
 # 2024.10.20 - v. 0.7 - with ffmpeg 7.0.2, -shortest shortened outputs incorrectly; removed it
 # 2024.08.13 - v. 0.6 - zero-pad _1_,_2_,_3_ to _01_,_02_,_03_ in names
-# 2024.07.31 - v. 0.5 - rar-compress org/ so phone sync does not show it as an extra subfolder
+# 2024.07.31 - v. 0.5 - rar-compress org/ so phone sync does not show it as an extra subfolde
 # 2023.05.21 - v. 0.4 - sanitize cwd basename (spaces, Polish and odd chars); find -not at end (still buggy)
 # 2022.06.14 - v. 0.3 - work correctly when directory name has spaces
 # 2022.04.17 - v. 0.2 - strip Polish chars from filenames; chmod/chown/touch on org/
@@ -132,7 +135,7 @@ while [[ $# -gt 0 ]]; do
       if [[ -f "${profile_location_dir:-$HOME}/bin/_script_header.sh" ]]; then
         # shellcheck source=/dev/null
         . "${profile_location_dir:-$HOME}/bin/_script_header.sh" NO_STARTUP_DELAY
-        print_version_banner
+        print_version_banne
       else
         head -n1 "$0"
       fi
@@ -461,7 +464,7 @@ parse_volumedetect_db() {
 # Ask before convert. Default No ([y/N/q]). Single keypress. Returns 0 = proceed, 1 = decline.
 # q exits the script (summary via EXIT trap).
 prompt_ts() {
-  printf '[%s]' "$(date '+%Y.%m.%d %H:%M:%S')"
+  date '+[ %Y.%m.%d %H:%M:%S ]'
 }
 
 prompt_proceed_process() {
@@ -478,7 +481,17 @@ prompt_proceed_process() {
     return 1
   fi
 
-  printf '%s Process these files now? [y/N/q]: ' "$(prompt_ts)"
+  if declare -F script_echo_option >/dev/null 2>&1; then
+    script_echo_option "  [y] Yes — convert"
+    script_echo_option "  [N] No — skip convert (default)"
+    echo "  [q] Quit"
+  fi
+  if declare -F script_printf_prompt >/dev/null 2>&1; then
+    SCRIPT_TS_FN=prompt_ts
+    script_printf_prompt "Process these files now? [y/N/q]: "
+  else
+    printf '%s Process these files now? [y/N/q]: ' "$(prompt_ts)"
+  fi
   # Discard any pending typeahead, then wait forever for one key (no Enter).
   while read -r -t 0 -n 1; do :; done 2>/dev/null || true
   read -r -n 1 answer || answer=
@@ -534,7 +547,7 @@ SCAN_COL_GAP='  '
 
 # Command line that reproduces this run (speed operand plus the resolved format).
 print_run_settings_equivalent_cli() {
-  local cmd="" out="" p q_dir
+  local cmd="" out="" p q_di
   local -a parts=()
 
   if declare -F script_live_basename >/dev/null 2>&1; then
@@ -599,7 +612,7 @@ print_scan_table_row() {
 }
 
 print_run_summary() {
-  local i total_sec other_sec finished_str
+  local i total_sec other_sec finished_st
   local max_b mean_b max_a mean_a dur_b dur_a size_b size_a
   local sum_before sum_after sum_size_in sum_size_out
   local avg_max_b avg_mean_b avg_max_a avg_mean_a
@@ -848,7 +861,7 @@ replace_spaces_in_cwd_files() {
 }
 
 sanitize_cwd_basename() {
-  local cwd_name expr
+  local cwd_name exp
   local parent new_name
 
   parent="$(dirname -- "$(readlink -f .)")"
@@ -1018,7 +1031,7 @@ run_ffmpeg_convert() {
 }
 
 sanitize_files_in_cwd() {
-  local expr
+  local exp
   local -a targets=()
 
   # Spaces first via mv (all files in cwd), then other sanitize via rename on media/docs.
@@ -1121,7 +1134,17 @@ prompt_and_apply_trailing_episode_zero_pad() {
     return 0
   fi
 
-  printf '%s Zero-pad these episode number(s) now? [y/N/q]: ' "$(prompt_ts)"
+  if declare -F script_echo_option >/dev/null 2>&1; then
+    script_echo_option "  [y] Yes — rename"
+    script_echo_option "  [N] No — leave names (default)"
+    echo "  [q] Quit"
+  fi
+  if declare -F script_printf_prompt >/dev/null 2>&1; then
+    SCRIPT_TS_FN=prompt_ts
+    script_printf_prompt "Zero-pad these episode number(s) now? [y/N/q]: "
+  else
+    printf '%s Zero-pad these episode number(s) now? [y/N/q]: ' "$(prompt_ts)"
+  fi
   while read -r -t 0 -n 1; do :; done 2>/dev/null || true
   read -r -n 1 answer || answer=
   echo
@@ -1182,7 +1205,7 @@ echo "---- Script start $0 ($(date '+%Y.%m.%d %H:%M:%S'))"
 
 FFMPEG_BIN="$(resolve_ffmpeg_bin)" || die "ffmpeg not found (set FFMPEG_BIN or install ffmpeg)."
 require_cmd rename
-require_cmd rar
+require_cmd ra
 
 FFMPEG_RESOLVED="$(readlink -f "${FFMPEG_BIN}" 2>/dev/null || printf '%s' "${FFMPEG_BIN}")"
 FFMPEG_VERSION="$("${FFMPEG_BIN}" -hide_banner -version 2>/dev/null | head -n1 || true)"
@@ -1229,6 +1252,11 @@ for i in "${!audio_files[@]}"; do
 done
 
 COUNT_FOUND=${#audio_files[@]}
+
+SCRIPT_TS_FN=prompt_ts
+if declare -F script_ask_colors >/dev/null 2>&1; then
+  script_ask_colors 0
+fi
 
 if (( COUNT_FOUND == 0 )); then
   echo "No .mp3 / .m4a / .aac files to process in: $WORK_DIR"
@@ -1348,7 +1376,7 @@ else
       chmod --reference="$src" -- "$output_file" 2>/dev/null || true
       chown --reference="$src" -- "$output_file" 2>/dev/null || true
       touch --reference="$src" -- "$output_file" 2>/dev/null || true
-      ensure_org_dir
+      ensure_org_di
       mv -v -- "$src" org/
 
       OUT_SRC+=("$src")

@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.143700 - ask Use colors?; green prompts; highlight (default) on menus
 # v. 20261115.200000 - SUMMARY: Family-A chrome + Script/Version at top
 # v. 20261027.181751 - output-dates upfront: [P] pick per file is first and the default
 # v. 20261027.181106 - ask output dates for all files before encoding; apply after each encode
@@ -58,9 +59,11 @@
 # v. 20260930.223600 - name the source video codec and the output encoder separately
 # v. 20260930.222600 - encode display: normal progress bar, or verbose frames
 # v. 20260930.221800 - quiet ffmpeg log; print the ffmpeg version in a box
-# v. 20260930.221500 - file prompts: one key, no Enter
+# v. 20260930.221500 - file prompts: one key, no Ente
 # v. 20260930.220400 - faster viewing copy of a merged video (2, 5, 10, 20, …)
 
+# 2026.11.16 - v. 0.59 - Ask Use colors? at startup (default Yes); green single-key prompts;
+#   highlight "(default)" on menu lines (shared _script_header helpers).
 # 2026.10.27 - v. 0.58 - output-dates upfront menu: [P] Pick per file now is listed first and is the default (Enter)
 # 2026.10.27 - v. 0.57 - before any encode, ask how to set output dates for every file (one choice for all, or per file); after each encode only apply that choice and show the before/after table — no more date menu between files
 # 2026.10.21 - v. 0.56 - Ctrl-C / EXIT: stop ffmpeg before deleting the .partial.*.mp4, retry rm (NTFS/CIFS often keeps the file busy), and sweep orphans for this PID — previously cleanup said it ran but left …_x5.mp4.partial.<pid>.mp4
@@ -95,7 +98,7 @@
 # 2026.10.02 - v. 0.27 - every output is stem_xN_YYYYMMDD-HHMMSS.mp4
 # 2026.10.02 - v. 0.26 - --speed and --speedup are the same option; the printed command uses --speedup
 # 2026.10.02 - v. 0.25 - after a picture scan, the confirmation says it is already done and the command does not scan again
-# 2026.10.02 - v. 0.24 - keyframe menu lists same as the source first, with S as the capital letter
+# 2026.10.02 - v. 0.24 - keyframe menu lists same as the source first, with S as the capital lette
 # 2026.10.02 - v. 0.23 - picture scan shows a progress bar for the piece being decoded
 # 2026.10.02 - v. 0.22 - every question lists q to quit
 # 2026.10.02 - v. 0.21 - the last question asks whether to encode everything or try a short piece first
@@ -117,7 +120,7 @@
 # 2026.09.30 - v. 0.5 - print the source video codec and label the encoder that will write the new file
 # 2026.09.30 - v. 0.4 - encode display: normal is a progress bar (default); verbose keeps the ffmpeg frame line
 # 2026.09.30 - v. 0.3 - encode log is errors plus the progress line; print the ffmpeg version in a box
-# 2026.09.30 - v. 0.2 - file prompts read one key and do not wait for Enter
+# 2026.09.30 - v. 0.2 - file prompts read one key and do not wait for Ente
 # 2026.09.30 - v. 0.1 - initial release: write stem_xN.mp4 beside an input; 2× keeps audio, faster speeds drop it; NVENC when ffmpeg lists it, else libx264
 #
 # video-pgm-timelapse.sh
@@ -204,7 +207,7 @@ Options:
                        and prints which output is already there.
 
 An interactive run asks the questions, then prints the equivalent command and
-asks whether to encode. Answering no walks the questions again, and Enter
+asks whether to encode. Answering no walks the questions again, and Ente
 keeps each current answer. -y skips the questions and that confirmation.
 A pasted command with -y encodes without asking.
 
@@ -540,7 +543,7 @@ tl_output_path() {
 }
 
 tl_ffprobe_duration() {
-  local f="$1" dur
+  local f="$1" du
   dur="$(ffprobe -v error -show_entries format=duration -of csv=p=0 -- "$f" 2>/dev/null || true)"
   [[ "$dur" =~ ^[0-9]+([.][0-9]+)?$ ]] || return 1
   printf '%s\n' "$dur"
@@ -639,7 +642,7 @@ tl_eta_phrase() {
   remain="$(awk -v e="$elapsed" -v t="$total" -v s="$spd" 'BEGIN {
     r = (t - e) / s
     if (r < 0) r = 0
-    printf "%.3f", r
+    printf "%.3f", 
   }')"
   printf 'left %s  %s' "$(tl_eta_left "$remain")" "$(tl_eta_arrival "$remain")"
 }
@@ -820,7 +823,7 @@ tl_encoder_available() {
 # First line of `ffmpeg -version`, plus which GPU encoders this build has.
 tl_print_box_lines() {
   local -a lines=("$@")
-  local line width=0 bar
+  local line width=0 ba
   if (( ${#lines[@]} == 0 )); then
     return 0
   fi
@@ -1018,7 +1021,7 @@ tl_stop_ffmpeg() {
 
 # Remove the in-progress output. Retries: a busy mount often fails the first rm.
 tl_cleanup_partial() {
-  local f tries=0 dir
+  local f tries=0 di
   f="${TL_PARTIAL:-}"
   if [[ -n "$f" ]]; then
     while [[ -e "$f" ]] && (( tries < 25 )); do
@@ -1644,7 +1647,7 @@ tl_ask_output_dates_upfront() {
   echo "  Sources come from each source video (file name, mtime, CreateDate)."
   echo "  After each encode the choice is applied; you will not be asked again between files."
   echo
-  echo "  [$(tl_k p "$def")] Pick per file now (default)"
+  script_echo_option "  [$(tl_k p "$def")] Pick per file now (default)"
   echo "  [$(tl_k 1 "$def")] File name for every file"
   echo "  [$(tl_k 2 "$def")] Filesystem for every file"
   echo "  [$(tl_k 3 "$def")] Media tags for every file"
@@ -2000,7 +2003,7 @@ tl_filter_inputs_by_kind() {
 
 # Numbered toggle list. Marks start selected (1) or not (0).
 tl_pick_files_plain() {
-  local i n mark line answer
+  local i n mark line answe
   local -a marks=()
   n=${#TL_INPUTS[@]}
   for (( i = 0; i < n; i++ )); do
@@ -2153,7 +2156,7 @@ tl_prompt_input_files() {
     fi
     local -a key_list=(a)
     def=a
-    echo "  [A] All (${n}) (default)"
+    script_echo_option "  [A] All (${n}) (default)"
     if (( front > 0 )); then
       key_list+=(f)
       echo "  [f] FrontCam only (${front})"
@@ -2191,7 +2194,7 @@ tl_prompt_input_files() {
         ;;
       o)
         (( other > 0 )) || { echo "$(tl_ts) No other videos."; return 1; }
-        tl_filter_inputs_by_kind other
+        tl_filter_inputs_by_kind othe
         ;;
       p) tl_pick_files_plain ;;
       q) tl_quit_script ;;
@@ -2220,7 +2223,11 @@ tl_flush_stdin() {
 # One key, no Enter. Sets REPLY. An empty read uses default_key.
 tl_read_key() {
   local prompt="$1" default_key="${2:-}" answer=""
-  printf '%s' "$prompt"
+  if (( SCRIPT_USE_COLORS )); then
+    printf '%s%s%s' "$SCRIPT_C_G" "$prompt" "$SCRIPT_C_0"
+  else
+    printf '%s' "$prompt"
+  fi
   tl_flush_stdin
   read -n 1 answer || answer=""
   echo
@@ -2385,7 +2392,7 @@ tl_print_plan() {
   echo "  $(tl_equivalent_command)"
   echo
   echo "Proceed with these choices? [Y/n/q]"
-  echo "  [Y] Encode (default)"
+  script_echo_option "  [Y] Encode (default)"
   echo "  [n] Go through the questions again. Enter keeps each answer above."
   echo "  [q] Quit"
 }
@@ -2496,7 +2503,7 @@ tl_prompt_existing_output() {
   next="$(tl_next_take_name "$dest")"
   echo
   echo "This file was not encoded. [K/r/m/n/q]"
-  echo "  [K] Keep it and skip (default)"
+  script_echo_option "  [K] Keep it and skip (default)"
   echo "  [r] Replace it with this encode"
   echo "  [m] Rename it, then encode to the usual name"
   echo "      ${aside##*/}"
@@ -2552,7 +2559,7 @@ tl_prompt_before_files() {
   fi
   echo
   echo "Encode these files? [A/y/n/q]"
-  echo "  [A] Encode all ${total} files (default)"
+  script_echo_option "  [A] Encode all ${total} files (default)"
   echo "  [y] Encode the first file, then ask again"
   echo "  [n] Don't encode"
   echo "  [q] Quit"
@@ -2600,7 +2607,7 @@ tl_prompt_continue_after_file() {
   fi
   echo
   echo "Continue? [N/y/a/q]"
-  echo "  [N] Stop after this file (default)"
+  script_echo_option "  [N] Stop after this file (default)"
   echo "  [y] Encode the next file, then ask again"
   echo "  [a] Encode all remaining files (${span})"
   echo "  [q] Quit"
@@ -2662,7 +2669,7 @@ tl_prompt_file_action() {
     return 0
   fi
   if [[ -e "$dest" && "$REDO" -eq 0 ]]; then
-    echo "  [N] Skip — keep existing file (default)"
+    script_echo_option "  [N] Skip — keep existing file (default)"
     echo "  [r] Redo — replace ${dest##*/}"
     echo "  [a] Skip all remaining"
     echo "  [q] Quit"
@@ -2677,7 +2684,7 @@ tl_prompt_file_action() {
     esac
     return 0
   fi
-  echo "  [Y] Encode this file (default)"
+  script_echo_option "  [Y] Encode this file (default)"
   echo "  [n] Skip this file"
   echo "  [a] Skip all remaining"
   echo "  [m] Encode all remaining"
@@ -3001,7 +3008,7 @@ tl_measure_keyframe_gap() {
     END {
       if (kf + 0 == 0) { print "none"; exit }
       other = n - best_n
-      printf "%d %s %d %d\n", kf, best, best_n, other
+      printf "%d %s %d %d\n", kf, best, best_n, othe
     }' || true)"
   tl_processing_end
   if [[ "$gap_line" == none || -z "$gap_line" ]]; then
@@ -3322,7 +3329,7 @@ tl_apply_scan_suggestion() {
     echo "Suggestion: steady 30 fps, keyframe ${gap_note}."
     echo "  30 fps is the rate that sits evenly on a 60 Hz screen."
   fi
-  echo "  [N] Keep the choices you already made (default)"
+  script_echo_option "  [N] Keep the choices you already made (default)"
   echo "  [y] Apply this suggestion"
   echo "  [q] Quit"
   tl_read_key "Apply suggestion? [N/y/q]: " n
@@ -3730,7 +3737,7 @@ while [[ $# -gt 0 ]]; do
       exit 0
       ;;
     -v|--version)
-      print_version_banner
+      print_version_banne
       exit 0
       ;;
     --history)
@@ -4016,6 +4023,11 @@ if (( ${#TL_INPUTS[@]} == 0 )); then
 fi
 TL_SUMMARY=1
 
+SCRIPT_TS_FN=tl_ts
+if declare -F script_ask_colors >/dev/null 2>&1; then
+  script_ask_colors "$DO_YES"
+fi
+
 if (( TL_ASK_WHICH_FILES )) && (( script_is_run_interactively )) && (( ! DO_YES )); then
   tl_prompt_input_files
 fi
@@ -4047,7 +4059,7 @@ if (( script_is_run_interactively )) && (( ! DO_YES )); then
   [[ -n "$SPEED" ]] || SPEED=5
   [[ -n "$TL_DISPLAY" ]] || TL_DISPLAY=normal
   tl_prompt_display
-  tl_require_encoder
+  tl_require_encode
   tl_prompt_advanced
   while true; do
     tl_print_plan
@@ -4060,7 +4072,7 @@ if (( script_is_run_interactively )) && (( ! DO_YES )); then
         tl_ask_speed
         tl_prompt_display
         tl_prompt_advanced
-        tl_require_encoder
+        tl_require_encode
         ;;
       q)
         echo "$(tl_ts) Quit."
@@ -4078,7 +4090,7 @@ if (( script_is_run_interactively )) && (( ! DO_YES )); then
 else
   [[ -n "$SPEED" ]] || SPEED=5
   [[ -n "$TL_DISPLAY" ]] || TL_DISPLAY=normal
-  tl_require_encoder
+  tl_require_encode
   if [[ "${TL_GOP_KIND:-default}" == default && ${TL_GOP_EXPLICIT:-0} -eq 0 ]]; then
     tl_use_usual_gop
   fi

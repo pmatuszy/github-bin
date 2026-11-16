@@ -1,6 +1,7 @@
 #!/bin/bash
+# v. 20261116.143700 - ask Use colors?; green questions / prompts; highlight (default)
 # v. 20261115.142500 - Contour metadata: allow short clips; --force-contour bypasses duration gate
-# v. 20261115.115000 - drop Fix i/n line; (i/n) already on exiftool bar
+# v. 20261115.115000 - drop Fix i/n line; (i/n) already on exiftool ba
 # v. 20261115.112000 - one exiftool progress finish line (fold File* dates into main write)
 # v. 20261115.111500 - Contour: Make/Model metadata wins; filename is fallback
 # v. 20261115.104500 - pre-scan progress bar (i/n + %)
@@ -17,7 +18,7 @@
 # v. 20261115.090500 - [c] Always Contour start for later Contour files in this run
 # v. 20261115.085000 - Contour: offer Contour start (name − duration); agree if FS/media already at that start
 # v. 20261021.120123 - [k] keep as written for the rest of this run
-# v. 20261020.165500 - after each Fix dates key, print Selected: with the accepted answer
+# v. 20261020.165500 - after each Fix dates key, print Selected: with the accepted answe
 # v. 20261020.163800 - when nothing needed fixing, hint to re-run with --verbose
 # v. 20261020.163600 - --verbose prints every file check (stamps + verdict) even when dates already agree
 # v. 20261020.163300 - Processing header and before/after result block stand out (rules + mark changed rows)
@@ -32,15 +33,15 @@
 # 2026.11.15 - v. 0.1.29 - SUMMARY prints Script + Version at the top (shared identity helper)
 # 2026.11.15 - v. 0.1.28 - Contour Make/Model metadata skips the duration>120s gate (short clips
 #   still Contour); --force-contour / MFD_FORCE_CONTOUR forces Contour-style names the same way
-# 2026.11.15 - v. 0.1.27 - drop separate Fix i/n line; file index lives only on the exiftool bar
+# 2026.11.15 - v. 0.1.27 - drop separate Fix i/n line; file index lives only on the exiftool ba
 # 2026.11.15 - v. 0.1.26 - exiftool apply: include FileCreate/ModifyDate in the main write so the
 #   100% progress line is not printed twice
 # 2026.11.15 - v. 0.1.25 - Contour detect: Make/Model metadata first (Make=Contour); filename
-#   pattern only if tags absent; print when metadata identifies Contour
+#   pattern only if tags absent; print when metadata identifies Contou
 # 2026.11.15 - v. 0.1.24 - pre-scan shows a live progress bar (pct + i/n + filename)
 # 2026.11.15 - v. 0.1.23 - pre-scan before batching; batch size / Question X of Y cover only files
 #   that disagree (agree/skip counted once, not as batch slots)
-# 2026.11.15 - v. 0.1.22 - apply progress: Write/Fix i/n line + (i/n) on exiftool bar; remove Files bar
+# 2026.11.15 - v. 0.1.22 - apply progress: Write/Fix i/n line + (i/n) on exiftool bar; remove Files ba
 # 2026.11.15 - v. 0.1.21 - SUMMARY Timing adds Processing and Prompt/wait (plus Other overhead)
 # 2026.11.15 - v. 0.1.20 - apply phase: files bar + exiftool % from *_exiftool_tmp
 # 2026.11.15 - v. 0.1.19 - [b] during batch decide: apply queued answers now; current+later files
@@ -49,6 +50,8 @@
 # 2026.11.15 - v. 0.1.17 - process in batches: ask all decisions for a batch first, then write; batch size
 #   default = all when ≤50 files, else 50 (--batch-size / MFD_BATCH_SIZE); Ctrl-C during a write stops
 #   exiftool and removes that file's *_exiftool_tmp
+# 2026.11.16 - v. 0.1.17 - Ask Use colors? at startup (default Yes); green question/prompt text;
+#   highlight "(default)" on menu lines (shared _script_header helpers).
 # 2026.11.15 - v. 0.1.16 - end-of-run SUMMARY prints Started / Finished / Total wall time (like other pgm scripts)
 # 2026.11.15 - v. 0.1.15 - Contour normalize: rename stamp to clip start, filesystem mtime = end, media
 #   CreateDate = start. If name is already earlier than FS by ~duration (name=start, FS=end), treat as
@@ -70,12 +73,12 @@
 #   file-name stamp, filesystem mtime, and media CreateDate (or DateTimeOriginal);
 #   ask which to use (1/2/3…); default is the oldest usable date; stamps before 1990
 #   are ignored; write media CreateDate/ModifyDate and filesystem times (Windows
-#   creation on /mnt/?/…). -y applies the oldest without asking. [a] uses oldest for
+#   creation on /mnt/?/…). -y applies the oldest without asking. [a] uses oldest fo
 #   every later file in this run; [k] keeps as written for every later file.
 #
 # media-pgm-fix-dates.sh
 #
-# Align filesystem times and media CreateDate when they disagree with each other
+# Align filesystem times and media CreateDate when they disagree with each othe
 # or with a date stamp in the file name. Contour-style clips normalize to
 # name=start, filesystem=end, media=start (see Contour notes in --help).
 #
@@ -111,7 +114,7 @@ Contour cameras stamp the end of the clip in the name. This script can normalize
   Media CreateDate = start of clip
 Start = end-stamp − duration when the name still looks like an end; if the
 name is already earlier than the filesystem by about the duration (name=start,
-FS=end), the file agrees and duration is not subtracted again. Missing or
+FS=end), the file agrees and duration is not subtracted again. Missing o
 wrong media tags are filled with the start time.
 
 Applies to video, audio, and picture files. With no FILE or DIR, scan the
@@ -121,7 +124,7 @@ Options:
   -h, --help           Show this help and exit.
   -v, --version        Print script version and exit.
   --history            Print script changelog from the header and exit.
-  -y, --yes            Apply without asking: Contour normalize when Contour
+  -y, --yes            Apply without asking: Contour normalize when Contou
                        applies; otherwise the oldest usable date.
   -r, --recursive      Also scan subdirectories.
   --dry-run            Show what would change; do not write.
@@ -135,18 +138,18 @@ Options:
 
 Interactive keys (per file) — decisions only; writes run after the batch's
 questions:
-  1/2/3…               Pick a listed source (default = oldest usable, or
+  1/2/3…               Pick a listed source (default = oldest usable, o
                        Contour normalize when that row is the default).
                        When the default is a number, the prompt also says
                        e.g. (default 1 = File name).
   a                    Apply the oldest usable date for this file and every
                        later file in this run (no more prompts).
   c                    Contour only: Contour normalize (name→start, FS→end,
-                       media→start) for this file and every later Contour
+                       media→start) for this file and every later Contou
                        file in this run. Non-Contour files are unchanged by
                        [c] (still asked / oldest as usual). Shown only when
                        Contour normalize is available for this file.
-  k                    Keep dates as written for this file and every later
+  k                    Keep dates as written for this file and every late
                        file in this run (no more prompts).
   b                    Begin apply now — write answers so far; ask the rest
                        of this batch later.
@@ -442,7 +445,11 @@ mfd_read_key() {
     REPLY="$default"
     return 0
   fi
-  printf '%s %s' "$(mfd_ts)" "$prompt"
+  if declare -F script_printf_prompt >/dev/null 2>&1; then
+    script_printf_prompt "$prompt"
+  else
+    printf '%s %s' "$(mfd_ts)" "$prompt"
+  fi
   if [[ -t 0 ]]; then
     mfd_prompt_wait_begin
     read -n 1 answer || answer=
@@ -1443,10 +1450,18 @@ mfd_decide_file() {
   mfd_print_contour_detect_note
   echo
   if [[ -n "${MFD_CONTOUR_START_E:-}" ]]; then
-    echo "  Sources (Contour normalize is the default: name→start, FS→end, media→start)."
+    if declare -F script_echo_option >/dev/null 2>&1; then
+      script_echo_option "  Sources (Contour normalize is the default: name→start, FS→end, media→start)."
+    else
+      echo "  Sources (Contour normalize is the default: name→start, FS→end, media→start)."
+    fi
     echo "  Decisions are queued; writes run after this batch's questions."
   else
-    echo "  Sources (oldest usable is the default)."
+    if declare -F script_echo_option >/dev/null 2>&1; then
+      script_echo_option "  Sources (oldest usable is the default)."
+    else
+      echo "  Sources (oldest usable is the default)."
+    fi
     echo "  Decisions are queued; writes run after this batch's questions."
   fi
   echo
@@ -1470,8 +1485,13 @@ mfd_decide_file() {
         note="(${def_note})"
       fi
     fi
-    printf '  [%d] %-18s %-19s  %s\n' \
-      "$((i + 1))" "${MFD_LABELS[i]}" "$disp" "$note"
+    if declare -F script_echo_option >/dev/null 2>&1; then
+      script_echo_option "$(printf '  [%d] %-18s %-19s  %s' \
+        "$((i + 1))" "${MFD_LABELS[i]}" "$disp" "$note")"
+    else
+      printf '  [%d] %-18s %-19s  %s\n' \
+        "$((i + 1))" "${MFD_LABELS[i]}" "$disp" "$note"
+    fi
     key_list+=("$((i + 1))")
   done
   echo "  [$(mfd_k a "$MFD_DEFAULT_KEY")] Always oldest for the rest of this run"
@@ -1759,7 +1779,7 @@ while [[ $# -gt 0 ]]; do
       exit 0
       ;;
     -v|--version)
-      print_version_banner
+      print_version_banne
       exit 0
       ;;
     --history)
@@ -1828,7 +1848,12 @@ if [[ -f "${BASH_SOURCE[0]}" ]]; then
   chmod 700 "${BASH_SOURCE[0]}" 2>/dev/null || true
 fi
 
-print_version_banner
+print_version_banne
+
+SCRIPT_TS_FN=mfd_ts
+if declare -F script_ask_colors >/dev/null 2>&1; then
+  script_ask_colors "$DO_YES"
+fi
 
 MFD_SCRIPT_START_EPOCH=$(date +%s)
 MFD_SCRIPT_START_STR="$(mfd_wall_clock_now)"
