@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.071800 - Contour: bare/_NVenc_/Contour+2 all join by time; drop ~2 GB size band
 # v. 20261116.070800 - Contour: also group renamed Contour+2 by start+duration (no ~2 GB band)
 # v. 20261115.200000 - SUMMARY: Family-A chrome + Script/Version at top
 # v. 20261115.161500 - group prompt: [Y] merge this group (default); [m] merge all remaining
@@ -97,6 +98,9 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -r
 
+# 2026.11.16 - v. 0.15.113 - Contour join ignores file size for bare / _NVenc_ / Contour+2 alike: any
+#   Contour-parseable clip ≥ 10 MiB chains by start+duration (confident ≤45s; suspect 46–100s review).
+#   Dropped the ~2 GB FAT size band — Contour chapters often differ a lot after re-encode.
 # 2026.11.16 - v. 0.15.112 - Contour also groups rename.sh Contour+2 names (YYYYMMDD_HHMMSS_-_-_Contour+2)
 #   by filename start + duration with the same stop slack; no ~2 GB size band (HandBrake re-encodes
 #   are often ~1–3+ GB). Bare / _NVenc_ Contour FAT ~2 GB rules unchanged.
@@ -346,17 +350,15 @@ Merge behaviour:
     label, or share one start time with a trailing chapter letter on the time (…_200322a_…)
     or camera token (…_GOPRO10_BLACKa.MP4). Letter runs a,b,c… on the same timestamp merge
     like part_01 chapters (any file size).
-  - Also groups Contour-style clips without a GoPro token:
-    (1) YYYYMMDD_HHMMSS.mp4 / YYYYMMDD_HHMMSS_NVenc_….mp4 when chapters are ~2 GB
-        (Contour FAT-style splits; not the GoPro ~4 GB / ~12 GB bands); last may be
-        a smaller partial;
-    (2) rename.sh Contour+2 names YYYYMMDD_HHMMSS_-_-_Contour+2.mp4 (and legacy
-        Contour_2) on the same day when start + duration chains — no ~2 GB size
-        band (re-encoded Contour files are often longer than a FAT chapter).
-    Both use Contour stop slack (default next start from 30s early to 45s after
-    the previous chapter ends). Gaps of 46–100s are Contour *suspect* review
-    candidates (default Skip). Contour groups merge with ffmpeg concat (-c copy),
-    not mp4_merge. Output: YYYYMMDD_HHMMSS_Contour_concat_parts_01-NN.mp4.
+  - Also groups Contour-style clips without a GoPro token on the same calendar day
+    when filename start + duration chains: YYYYMMDD_HHMMSS.mp4,
+    YYYYMMDD_HHMMSS_NVenc_….mp4, and rename.sh Contour+2
+    (YYYYMMDD_HHMMSS_-_-_Contour+2 / legacy Contour_2). File size is not used
+    (only a 10 MiB floor) — Contour chapters often differ a lot after re-encode.
+    Contour stop slack: next start from 30s early to 45s after the previous end
+    (confident). Gaps of 46–100s are Contour *suspect* review candidates (default
+    Skip). Contour groups merge with ffmpeg concat (-c copy), not mp4_merge.
+    Output: YYYYMMDD_HHMMSS_Contour_concat_parts_01-NN.mp4.
   - Also groups 70mai-style clips NOYYYYMMDD-HHMMSS-NNNNNNX.MP4 and the same
     name starting with EV (same camera letter) into a continuous journey: ordered
     by filename time, sequence number increases by 1, and the filename start times
@@ -474,10 +476,8 @@ Environment:
                           prev start + ffprobe duration (default: 180).
   PGM_SIZE_SPLIT_TIME_TOLERANCE_SEC
                           For size-split (no _part_XX) chains: same check (default: 2).
-  PGM_CONTOUR_2G_MIN_BYTES / PGM_CONTOUR_2G_MAX_BYTES
-                          Contour ~2 GB full-chapter size band (defaults ~1.85e9–2.35e9).
-  PGM_CONTOUR_DURATION_REJECT_BELOW_SEC
-                          Reject a Contour full chapter shorter than this (default: 300).
+  PGM_CONTOUR_MIN_BYTES   Minimum size for a Contour chainable clip (default 10 MiB).
+                          File size is otherwise ignored (bare / _NVenc_ / Contour+2).
   PGM_CONTOUR_TIME_TOLERANCE_SEC / PGM_CONTOUR_TIME_MAX_STOP_SEC
                           Contour confident chain: next start vs prev start + duration
                           may be this many seconds early (default 30) or late (default 45).
@@ -3020,10 +3020,8 @@ PGM_SIZE_SPLIT_DURATION_REJECT_BELOW_SEC="${PGM_SIZE_SPLIT_DURATION_REJECT_BELOW
 # High-bitrate Mission 1 ~10 GB chapters are often ~10–16 min; do not require Hero-like ~18 min.
 PGM_SIZE_SPLIT_12G_DURATION_REJECT_BELOW_SEC="${PGM_SIZE_SPLIT_12G_DURATION_REJECT_BELOW_SEC:-120}"
 PGM_SIZE_SPLIT_12G_TIME_MAX_GAP_SEC="${PGM_SIZE_SPLIT_12G_TIME_MAX_GAP_SEC:-2400}"
-# Contour FAT-style ~2 GB splits (calibrated from ~2.0–2.2 GB Contour / NVenc chapters).
-PGM_CONTOUR_2G_MIN_BYTES="${PGM_CONTOUR_2G_MIN_BYTES:-1850000000}"
-PGM_CONTOUR_2G_MAX_BYTES="${PGM_CONTOUR_2G_MAX_BYTES:-2350000000}"
-PGM_CONTOUR_DURATION_REJECT_BELOW_SEC="${PGM_CONTOUR_DURATION_REJECT_BELOW_SEC:-300}"
+# Contour chainable clips: size only needs a small floor (not a ~2 GB band).
+PGM_CONTOUR_MIN_BYTES="${PGM_CONTOUR_MIN_BYTES:-10485760}"
 # Next start ≈ prev + duration: early by TOLERANCE, late confident by MAX_STOP;
 # MAX_STOP+1 … SUSPECT_MAX_STOP = review candidates (default 46–100s).
 PGM_CONTOUR_TIME_TOLERANCE_SEC="${PGM_CONTOUR_TIME_TOLERANCE_SEC:-30}"
@@ -4668,15 +4666,13 @@ print_size_split_near_miss_hint() {
   fi
 }
 
-# Contour-style basename. Sets CONTOUR_TS_DATE / CONTOUR_TS_TIME / CONTOUR_KIND:
-#   fat2g   — bare YYYYMMDD_HHMMSS.mp4 or YYYYMMDD_HHMMSS_NVenc_….mp4 (~2 GB FAT chapters)
-#   renamed — YYYYMMDD_HHMMSS_-_-_Contour+2.mp4 (rename.sh / legacy Contour_2); time-chain only
-# (no GoPro camera token, no _part_XX, not 70mai NO*/EV*).
+# Contour-style basename. Sets CONTOUR_TS_DATE / CONTOUR_TS_TIME.
+# Accepts bare YYYYMMDD_HHMMSS.mp4, YYYYMMDD_HHMMSS_NVenc_….mp4, and rename.sh
+# Contour+2 / legacy Contour_2. (No GoPro token, no _part_XX, not 70mai NO*/EV*.)
 contour_basename_parse() {
   local base="$1"
   CONTOUR_TS_DATE=""
   CONTOUR_TS_TIME=""
-  CONTOUR_KIND=""
   [[ -n "$base" ]] || return 1
   is_concat_output_basename "$base" && return 1
   chapter_part_from_basename "$base" >/dev/null 2>&1 && return 1
@@ -4690,64 +4686,42 @@ contour_basename_parse() {
   if [[ "$base" =~ ^([0-9]{8})_([0-9]{6})\.[mM][pP]4$ ]]; then
     CONTOUR_TS_DATE="${BASH_REMATCH[1]}"
     CONTOUR_TS_TIME="${BASH_REMATCH[2]}"
-    CONTOUR_KIND=fat2g
     return 0
   fi
   if [[ "$base" =~ ^([0-9]{8})_([0-9]{6})_NVenc_.*\.[mM][pP]4$ ]]; then
     CONTOUR_TS_DATE="${BASH_REMATCH[1]}"
     CONTOUR_TS_TIME="${BASH_REMATCH[2]}"
-    CONTOUR_KIND=fat2g
     return 0
   fi
   # rename.sh Contour+2 (and legacy Contour_2 / Contour_Contour2).
   if [[ "$base" =~ ^([0-9]{8})_([0-9]{6})_(-__-_|-_-_)[Cc]ontour(\+2|_2|[Cc]ontour\+2|[Cc]ontour2)?\.[mM][pP]4$ ]]; then
     CONTOUR_TS_DATE="${BASH_REMATCH[1]}"
     CONTOUR_TS_TIME="${BASH_REMATCH[2]}"
-    CONTOUR_KIND=renamed
     return 0
   fi
   return 1
 }
 
-is_full_contour_size_split_segment() {
-  local f="$1" sz dur
+# Any Contour-parseable clip large enough to be a real video (≥ PGM_CONTOUR_MIN_BYTES).
+# Size band is not used — Contour chapters often differ a lot (raw vs re-encode).
+is_contour_chainable_segment() {
+  local f="$1" sz dur min_b
   contour_basename_parse "${f##*/}" || return 1
-  [[ "${CONTOUR_KIND}" == fat2g ]] || return 1
+  min_b="${PGM_CONTOUR_MIN_BYTES:-10485760}"
+  [[ "$min_b" =~ ^[0-9]+$ ]] || min_b=10485760
   sz=$(file_size_bytes "$f")
-  pgm_size_bytes_in_closed_range "$sz" "$PGM_CONTOUR_2G_MIN_BYTES" "$PGM_CONTOUR_2G_MAX_BYTES" || return 1
-  dur=$(ffprobe_duration_seconds "$f" 2>/dev/null) || dur=""
-  if [[ -n "$dur" ]]; then
-    awk -v d="$dur" -v rej="$PGM_CONTOUR_DURATION_REJECT_BELOW_SEC" \
-      'BEGIN { exit !(d+0 > 0 && d+0 < rej) }' && return 1
-  fi
-  return 0
-}
-
-# Trailing Contour chapter after a full ~2 GB run (smaller than the 2 GB band).
-is_partial_contour_size_split_segment() {
-  local f="$1" sz
-  contour_basename_parse "${f##*/}" || return 1
-  [[ "${CONTOUR_KIND}" == fat2g ]] || return 1
-  sz=$(file_size_bytes "$f")
-  pgm_size_bytes_lt "$sz" "$PGM_CONTOUR_2G_MIN_BYTES" || return 1
-  # Ignore tiny leftovers / non-video scraps.
-  pgm_size_bytes_lt "$sz" 10485760 && return 1
-  return 0
-}
-
-# Renamed Contour+2 chapter: any size ≥ 10 MiB (HandBrake re-encodes are not ~2 GB FAT splits).
-is_renamed_contour_segment() {
-  local f="$1" sz dur
-  contour_basename_parse "${f##*/}" || return 1
-  [[ "${CONTOUR_KIND}" == renamed ]] || return 1
-  sz=$(file_size_bytes "$f")
-  pgm_size_bytes_lt "$sz" 10485760 && return 1
+  pgm_size_bytes_lt "$sz" "$min_b" && return 1
   dur=$(ffprobe_duration_seconds "$f" 2>/dev/null) || dur=""
   if [[ -n "$dur" ]]; then
     awk -v d="$dur" 'BEGIN { exit !(d+0 > 0) }' || return 1
   fi
   return 0
 }
+
+# Back-compat aliases (same eligibility; no ~2 GB / partial distinction anymore).
+is_full_contour_size_split_segment() { is_contour_chainable_segment "$1"; }
+is_partial_contour_size_split_segment() { is_contour_chainable_segment "$1"; }
+is_renamed_contour_segment() { is_contour_chainable_segment "$1"; }
 
 # Sets CONTOUR_LINK_DELTA = next_start − (prev_start + duration). Same calendar day.
 contour_chapter_time_delta() {
@@ -4815,62 +4789,34 @@ contour_chapter_timestamps_within_suspect_ceiling() {
 
 contour_run_valid() {
   local -a run=("$@")
-  local i n=${#run[@]} f
+  local i n=${#run[@]}
   (( n >= 2 )) || return 1
-  # Renamed Contour+2: every chapter eligible; chain by start+duration only.
-  if is_renamed_contour_segment "${run[0]}"; then
-    for (( i = 0; i < n; i++ )); do
-      is_renamed_contour_segment "${run[i]}" || return 1
-    done
-    for (( i = 0; i < n - 1; i++ )); do
-      contour_chapter_timestamps_follow "${run[i]}" "${run[i + 1]}" || return 1
-    done
-    return 0
-  fi
-  # FAT ~2 GB Contour: full chapters, last may be partial.
+  for (( i = 0; i < n; i++ )); do
+    is_contour_chainable_segment "${run[i]}" || return 1
+  done
   for (( i = 0; i < n - 1; i++ )); do
-    is_full_contour_size_split_segment "${run[i]}" || return 1
     contour_chapter_timestamps_follow "${run[i]}" "${run[i + 1]}" || return 1
   done
-  f="${run[n - 1]}"
-  if is_full_contour_size_split_segment "$f"; then
-    return 0
-  fi
-  is_partial_contour_size_split_segment "$f"
+  return 0
 }
 
 # Suspect run: all links ≤ suspect ceiling; at least one link in the suspect band; not a confident run.
 contour_suspect_run_valid() {
   local -a run=("$@")
-  local i n=${#run[@]} f has_suspect=0
+  local i n=${#run[@]} has_suspect=0
   (( n >= 2 )) || return 1
   contour_run_valid "${run[@]}" && return 1
-  if is_renamed_contour_segment "${run[0]}"; then
-    for (( i = 0; i < n; i++ )); do
-      is_renamed_contour_segment "${run[i]}" || return 1
-    done
-    for (( i = 0; i < n - 1; i++ )); do
-      contour_chapter_timestamps_within_suspect_ceiling "${run[i]}" "${run[i + 1]}" || return 1
-      if contour_chapter_timestamps_suspect_link "${run[i]}" "${run[i + 1]}"; then
-        has_suspect=1
-      fi
-    done
-    (( has_suspect )) || return 1
-    return 0
-  fi
+  for (( i = 0; i < n; i++ )); do
+    is_contour_chainable_segment "${run[i]}" || return 1
+  done
   for (( i = 0; i < n - 1; i++ )); do
-    is_full_contour_size_split_segment "${run[i]}" || return 1
     contour_chapter_timestamps_within_suspect_ceiling "${run[i]}" "${run[i + 1]}" || return 1
     if contour_chapter_timestamps_suspect_link "${run[i]}" "${run[i + 1]}"; then
       has_suspect=1
     fi
   done
   (( has_suspect )) || return 1
-  f="${run[n - 1]}"
-  if is_full_contour_size_split_segment "$f"; then
-    return 0
-  fi
-  is_partial_contour_size_split_segment "$f"
+  return 0
 }
 
 group_is_contour_size_split() {
@@ -4969,11 +4915,11 @@ pgm_ffmpeg_concat_copy_files() {
   return "$rc"
 }
 
-# Group remaining Contour singles that chain by start+duration (Contour stop slack):
-# FAT ~2 GB bare/NVenc chapters, and renamed Contour+2 (any size ≥ 10 MiB).
+# Group remaining Contour singles that chain by start+duration (Contour stop slack).
+# Bare / _NVenc_ / Contour+2 — size only needs PGM_CONTOUR_MIN_BYTES.
 build_contour_size_split_groups() {
   local -a kept=() singles=() run=() new_groups=()
-  local blob files f base i n run_mode
+  local blob files f base i n
 
   for blob in "${GROUP_BLOBS[@]}"; do
     group_files_to_array "$blob" files
@@ -5003,13 +4949,8 @@ build_contour_size_split_groups() {
   n=${#singles[@]}
   i=0
   while (( i < n )); do
-    pgm_progress_update "Contour size-split" "$((i + 1))" "$n" "${singles[i]}"
-    run_mode=""
-    if is_renamed_contour_segment "${singles[i]}"; then
-      run_mode=renamed
-      run=("${singles[i]}")
-    elif is_full_contour_size_split_segment "${singles[i]}"; then
-      run_mode=fat2g
+    pgm_progress_update "Contour chain" "$((i + 1))" "$n" "${singles[i]}"
+    if is_contour_chainable_segment "${singles[i]}"; then
       run=("${singles[i]}")
     else
       kept+=("${singles[i]}")
@@ -5020,27 +4961,15 @@ build_contour_size_split_groups() {
     while (( i < n )); do
       f="${singles[i]}"
       base="${f##*/}"
-      pgm_progress_update "Contour size-split" "$((i + 1))" "$n" "$f"
+      pgm_progress_update "Contour chain" "$((i + 1))" "$n" "$f"
       contour_basename_parse "$base" || break
       if ! contour_chapter_timestamps_follow "${run[-1]}" "$f"; then
         break
       fi
-      if [[ "$run_mode" == renamed ]]; then
-        if is_renamed_contour_segment "$f"; then
-          run+=("$f")
-          (( i++ )) || true
-          continue
-        fi
-        break
-      fi
-      if is_full_contour_size_split_segment "$f"; then
+      if is_contour_chainable_segment "$f"; then
         run+=("$f")
         (( i++ )) || true
         continue
-      fi
-      if is_partial_contour_size_split_segment "$f"; then
-        run+=("$f")
-        (( i++ )) || true
       fi
       break
     done
@@ -5063,7 +4992,7 @@ build_contour_size_split_groups() {
 # confident [1,2] plus +54s file 3 becomes a suspect [1,2,3] for manual review.
 build_contour_suspect_groups() {
   local -a pool=() run=() files=()
-  local blob f base i n note run_mode
+  local blob f base i n note
   CONTOUR_SUSPECT_BLOBS=()
   CONTOUR_SUSPECT_NOTES=()
 
@@ -5101,12 +5030,7 @@ build_contour_suspect_groups() {
   i=0
   while (( i < n )); do
     pgm_progress_update "Contour suspect" "$((i + 1))" "$n" "${pool[i]}"
-    run_mode=""
-    if is_renamed_contour_segment "${pool[i]}"; then
-      run_mode=renamed
-      run=("${pool[i]}")
-    elif is_full_contour_size_split_segment "${pool[i]}"; then
-      run_mode=fat2g
+    if is_contour_chainable_segment "${pool[i]}"; then
       run=("${pool[i]}")
     else
       (( i++ )) || true
@@ -5121,22 +5045,10 @@ build_contour_suspect_groups() {
       if ! contour_chapter_timestamps_within_suspect_ceiling "${run[-1]}" "$f"; then
         break
       fi
-      if [[ "$run_mode" == renamed ]]; then
-        if is_renamed_contour_segment "$f"; then
-          run+=("$f")
-          (( i++ )) || true
-          continue
-        fi
-        break
-      fi
-      if is_full_contour_size_split_segment "$f"; then
+      if is_contour_chainable_segment "$f"; then
         run+=("$f")
         (( i++ )) || true
         continue
-      fi
-      if is_partial_contour_size_split_segment "$f"; then
-        run+=("$f")
-        (( i++ )) || true
       fi
       break
     done
@@ -6739,7 +6651,7 @@ build_chapter_groups() {
   build_letter_chapter_groups
   # 5) ~4 GB / ~12 GB size-split chapters without letter / _part_XX names
   build_size_split_groups
-  # 6) Contour: FAT ~2 GB (bare/_NVenc_) or renamed Contour+2 time-chain (confident ≤45s)
+  # 6) Contour time-chain (bare / _NVenc_ / Contour+2; confident ≤45s)
   build_contour_size_split_groups
   # 6b) Contour suspect review runs (46–100s gaps; not auto-merged)
   build_contour_suspect_groups
@@ -6906,7 +6818,7 @@ print_group_plan() {
     done
   fi
   if (( contour_groups > 0 )); then
-    echo "Merge candidates (Contour: ~2 GB bare/_NVenc_ or renamed Contour+2; start+duration chain ≤${PGM_CONTOUR_TIME_MAX_STOP_SEC:-45}s after chapter end):"
+    echo "Merge candidates (Contour bare/_NVenc_/Contour+2; start+duration chain ≤${PGM_CONTOUR_TIME_MAX_STOP_SEC:-45}s after chapter end; size ignored aside from ${PGM_CONTOUR_MIN_BYTES:-10485760} B floor):"
     gidx=0
     for blob in "${GROUP_BLOBS[@]}"; do
       group_files_to_array "$blob" files
