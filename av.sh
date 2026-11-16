@@ -24,8 +24,8 @@
 # av.sh
 #
 # Short launcher: show audio / media / video tools beside this script and run one.
-# TTY + shared arrow menu: Up/Down + Enter (tags a1/v2/…; letter keys work). Otherwise
-# typed two-char keys, no Enter. [q] quits.
+# TTY + shared arrow menu: Up/Down + Enter (tags a1/v2/…). Otherwise typed
+# two-char keys, no Enter. [q] quits.
 #
 
 set -o nounset
