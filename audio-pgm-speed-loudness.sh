@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261116.160000 - proceed and episode zero-pad menus use script_arrow_menu
 # v. 20261116.143700 - ask Use colors?; green prompts; highlight (default)
 # v. 20261115.200000 - SUMMARY: Family-A chrome + Script/Version at top
 # v. 20261006.183857 - directory listing uses /bin/ls so a shell ls function cannot add --full-time
@@ -30,6 +31,7 @@
 # v. 20260810.160147 - pre-scan volumedetect table; before/after dB; end-of-run summary
 # v. 20260810.152506 - rename to audio-pgm-speed-loudness.sh (drop CURRENT-DIRECTORY suffix)
 # v. 20260810.152137 - add English rewrite: cwd atempo+speechnorm, fix find grouping, safe file loop
+# 2026.11.16 - v. 0.11 - [y/N/q] proceed and episode zero-pad prompts use shared script_arrow_menu.
 # 2026.11.16 - v. 0.10 - Ask Use colors? at startup (default Yes); green prompts; highlight "(default)"
 #   (shared _script_header helpers).
 # 2026.10.06 - v. 0.9 - directory listing uses /bin/ls so a shell ls function cannot add --full-time
@@ -467,6 +469,32 @@ prompt_ts() {
   date '+[ %Y.%m.%d %H:%M:%S ]'
 }
 
+sl_choice() {
+  local c="${1,,}"
+  c="${c//$'\r'/}"
+  c="${c//$'\n'/}"
+  printf '%s' "$c"
+}
+
+sl_arrow_menu_restore_tty() {
+  if declare -F script_arrow_menu_restore_tty >/dev/null 2>&1; then
+    script_arrow_menu_restore_tty
+  fi
+}
+
+sl_arrow_menu() {
+  if declare -F script_colors_init >/dev/null 2>&1; then
+    script_colors_init
+  fi
+  if declare -F script_arrow_menu >/dev/null 2>&1; then
+    script_arrow_menu "$@"
+    return $?
+  fi
+  echo "$(prompt_ts) script_arrow_menu missing — update _script_header.sh." >&2
+  REPLY="$(sl_choice "${1:-}")"
+  return 1
+}
+
 prompt_proceed_process() {
   local answer=""
   local cover_note=""
@@ -481,26 +509,17 @@ prompt_proceed_process() {
     return 1
   fi
 
-  if declare -F script_echo_option >/dev/null 2>&1; then
-    script_echo_option "  [y] Yes — convert"
-    script_echo_option "  [N] No — skip convert (default)"
-    echo "  [q] Quit"
-  fi
-  if declare -F script_printf_prompt >/dev/null 2>&1; then
-    SCRIPT_TS_FN=prompt_ts
-    script_printf_prompt "Process these files now? [y/N/q]: "
+  if declare -F script_print_question >/dev/null 2>&1; then
+    script_print_question "Process these files now?"
   else
-    printf '%s Process these files now? [y/N/q]: ' "$(prompt_ts)"
+    echo "$(prompt_ts) Process these files now?"
   fi
-  # Discard any pending typeahead, then wait forever for one key (no Enter).
-  while read -r -t 0 -n 1; do :; done 2>/dev/null || true
-  read -r -n 1 answer || answer=
   echo
-  # Empty / Enter → default N
-  if [[ -z "${answer}" || "$answer" == $'\n' ]]; then
-    answer=n
-  fi
-  case "${answer,,}" in
+  sl_arrow_menu n \
+    "y|Yes — convert" \
+    "n|No — skip convert (default)" \
+    "q|Quit"
+  case "$(sl_choice "$REPLY")" in
     y)
       printf '%s Selected: yes — converting.\n' "$(prompt_ts)"
       return 0
@@ -771,6 +790,7 @@ print_run_summary() {
 }
 
 on_interrupt() {
+  sl_arrow_menu_restore_tty
   RUN_OUTCOME=interrupted
   RUN_EXIT_CODE=130
   exit 130
@@ -1134,24 +1154,17 @@ prompt_and_apply_trailing_episode_zero_pad() {
     return 0
   fi
 
-  if declare -F script_echo_option >/dev/null 2>&1; then
-    script_echo_option "  [y] Yes — rename"
-    script_echo_option "  [N] No — leave names (default)"
-    echo "  [q] Quit"
-  fi
-  if declare -F script_printf_prompt >/dev/null 2>&1; then
-    SCRIPT_TS_FN=prompt_ts
-    script_printf_prompt "Zero-pad these episode number(s) now? [y/N/q]: "
+  if declare -F script_print_question >/dev/null 2>&1; then
+    script_print_question "Zero-pad these episode number(s) now?"
   else
-    printf '%s Zero-pad these episode number(s) now? [y/N/q]: ' "$(prompt_ts)"
+    echo "$(prompt_ts) Zero-pad these episode number(s) now?"
   fi
-  while read -r -t 0 -n 1; do :; done 2>/dev/null || true
-  read -r -n 1 answer || answer=
   echo
-  if [[ -z "${answer}" || "$answer" == $'\n' ]]; then
-    answer=n
-  fi
-  case "${answer,,}" in
+  sl_arrow_menu n \
+    "y|Yes — rename" \
+    "n|No — leave names (default)" \
+    "q|Quit"
+  case "$(sl_choice "$REPLY")" in
     y)
       printf '%s Selected: yes — renaming.\n' "$(prompt_ts)"
       for i in "${!EPISODE_PAD_FROM[@]}"; do

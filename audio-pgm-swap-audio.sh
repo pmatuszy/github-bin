@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.160000 - multi-choice prompts use shared script_arrow_menu (Up/Down)
 # v. 20261116.143700 - highlight (default) via shared script_echo_option; sync SCRIPT_USE_COLORS
 # v. 20261116.135500 - yn prompts: [1]=Yes [2]=No alongside Y/N; colors menu shows 1/2
 # v. 20261115.200000 - SUMMARY: Family-A chrome + Script/Version at top
@@ -21,6 +22,7 @@
 # v. 20261014.220133 - ask to keep the original (default yes); print a facts table before and after each swap
 # v. 20261014.213909 - swap audio tracks in a video; every other stream stays, in the same orde
 #
+# 2026.11.16 - v. 0.20 - Colors, together/one-by-one, languages, keep-copy, subtitles, and per-file swap menus use shared script_arrow_menu.
 # 2026.11.16 - v. 0.19 - On Y/n prompts, [1]=Yes and [2]=No (same as Y/N); colors/keep-copy menus show both.
 # 2026.10.16 - v. 0.18 - --default N keeps the audio order and marks audio track N as the default. Picture, telemetry and the other streams stay in their original orde
 # 2026.10.16 - v. 0.17 - GoPro gpmd/MET is copied in place; tmcd cannot be stream-copied, so it is rebuilt and moved back beside telemetry in the original orde
@@ -402,6 +404,30 @@ sa_flush_stdin() {
   while (( drained < 256 )) && IFS= read -r -t 0.02 -n 1 discard; do
     (( drained++ )) || true
   done
+}
+
+sa_choice() {
+  local c="${1,,}"
+  c="${c//$'\r'/}"
+  c="${c//$'\n'/}"
+  printf '%s' "$c"
+}
+
+sa_arrow_menu_restore_tty() {
+  if declare -F script_arrow_menu_restore_tty >/dev/null 2>&1; then
+    script_arrow_menu_restore_tty
+  fi
+}
+
+sa_arrow_menu() {
+  sa_colors
+  if declare -F script_arrow_menu >/dev/null 2>&1; then
+    script_arrow_menu "$@"
+    return $?
+  fi
+  echo "$(sa_ts) script_arrow_menu missing — update _script_header.sh." >&2
+  REPLY="$(sa_choice "${1:-}")"
+  return 1
 }
 
 # One key, no Enter. Space and Enter take the default.
@@ -1962,10 +1988,13 @@ sa_ask_colors() {
   sa_colors
   echo
   sa_print_question "Use colors in the terminal?"
-  script_echo_option "  [Y] / [1] Yes (default)"
-  echo "  [n] / [2] No"
-  echo "  [q] Quit"
-  sa_read_key "Use colors? [Y/n/q or 1/2]: " y "Yes (use colors)"
+  echo
+  sa_colors
+  sa_arrow_menu y \
+    "y|Yes (default)" \
+    "n|No" \
+    "q|Quit"
+  REPLY="$(sa_choice "$REPLY")"
   case "$REPLY" in
     y) USE_COLORS=yes ;;
     n) USE_COLORS=no ;;
@@ -1987,11 +2016,14 @@ sa_ask_keep_copy() {
   fi
   echo
   sa_print_question "Keep a copy of each original file?"
-  script_echo_option "  [Y] / [1] Yes (default) — original becomes clip-backup.mp4; swapped file keeps the original name"
-  echo "      If clip-backup.mp4 is already there, a dated copy is added and that file is left as it is"
-  echo "  [n] / [2] No — replace the original with the swapped file"
-  echo "  [q] Quit"
-  sa_read_key "Keep a copy of the original? [Y/n/q or 1/2]: " y "Yes — save original as clip-backup.mp4"
+  echo "  If clip-backup.mp4 is already there, a dated copy is added and that file is left as it is"
+  echo
+  sa_colors
+  sa_arrow_menu y \
+    "y|Yes (default) — original becomes clip-backup.mp4; swapped file keeps the original name" \
+    "n|No — replace the original with the swapped file" \
+    "q|Quit"
+  REPLY="$(sa_choice "$REPLY")"
   case "$REPLY" in
     y)
       KEEP_ORIGINAL=1
@@ -2025,10 +2057,13 @@ sa_ask_together() {
   fi
   echo
   sa_print_question "Ask about each file, or swap them all the same way?"
-  script_echo_option "  [O] One by one (default)"
-  echo "  [t] Together — same audio order for every file"
-  echo "  [q] Quit"
-  sa_read_key "Ask file by file? [O/t/q]: " o "One by one"
+  echo
+  sa_colors
+  sa_arrow_menu o \
+    "o|One by one (default)" \
+    "t|Together — same audio order for every file" \
+    "q|Quit"
+  REPLY="$(sa_choice "$REPLY")"
   case "$REPLY" in
     o)
       TOGETHER=0
@@ -2053,10 +2088,13 @@ sa_ask_subtitles() {
   fi
   echo
   sa_print_question "Also swap subtitle tracks to the same languages as the audio?"
-  script_echo_option "  [Y] / [1] Yes (default) — Italian audio with Italian subtitles, and so on"
-  echo "  [n] / [2] No — leave subtitle order as it is"
-  echo "  [q] Quit"
-  sa_read_key "Swap matching subtitles? [Y/n/q or 1/2]: " y "Yes — same language order as audio"
+  echo
+  sa_colors
+  sa_arrow_menu y \
+    "y|Yes (default) — Italian audio with Italian subtitles, and so on" \
+    "n|No — leave subtitle order as it is" \
+    "q|Quit"
+  REPLY="$(sa_choice "$REPLY")"
   case "$REPLY" in
     y)
       SWAP_SUBS=1
@@ -2176,11 +2214,14 @@ sa_ask_languages() {
   echo "  (audio and/or subtitles)."
   echo
   sa_print_question "Leave only English, Polish and German?"
-  script_echo_option "  [Y] Yes (default) — drop ${extra_txt}"
-  echo "  [c] Choose which languages to drop (you can pick more than one)"
-  echo "  [k] Keep every language"
-  echo "  [q] Quit"
-  sa_read_key "Leave English, Polish, German? [Y/c/k/q]: " y "Yes — drop ${extra_txt}"
+  echo
+  sa_colors
+  sa_arrow_menu y \
+    "y|Yes (default) — drop ${extra_txt}" \
+    "c|Choose which languages to drop (you can pick more than one)" \
+    "k|Keep every language" \
+    "q|Quit"
+  REPLY="$(sa_choice "$REPLY")"
   case "$REPLY" in
     y)
       sa_set_drop_from_extras
@@ -2593,16 +2634,27 @@ sa_process_one_work() {
     echo
     if (( DEFAULT_SET )) && sa_slots_are_identity "$order" "$n"; then
       sa_print_question "Make audio track ${DEFAULT_AUDIO} the default?"
-      script_echo_option "  [Y] Yes, leave the track order (default)"
     else
       sa_print_question "Swap the audio in this file?"
-      script_echo_option "  [Y] Yes, order ${order} (default)"
     fi
-    echo "  [o] Type a new audio order"
-    echo "  [s] Skip this file"
-    echo "  [a] Yes, and the same order for every remaining file"
-    echo "  [q] Quit"
-    sa_read_key "Swap audio? [Y/o/s/a/q]: " y "Yes, order ${order}"
+    echo
+    sa_colors
+    if (( DEFAULT_SET )) && sa_slots_are_identity "$order" "$n"; then
+      sa_arrow_menu y \
+        "y|Yes, leave the track order (default)" \
+        "o|Type a new audio order" \
+        "s|Skip this file" \
+        "a|Yes, and the same order for every remaining file" \
+        "q|Quit"
+    else
+      sa_arrow_menu y \
+        "y|Yes, order ${order} (default)" \
+        "o|Type a new audio order" \
+        "s|Skip this file" \
+        "a|Yes, and the same order for every remaining file" \
+        "q|Quit"
+    fi
+    REPLY="$(sa_choice "$REPLY")"
     case "$REPLY" in
       y) sa_print_selected "yes (${order})" ;;
       o)
@@ -2834,6 +2886,7 @@ sa_on_exit() {
 }
 
 sa_ctrl_c() {
+  sa_arrow_menu_restore_tty
   STOPPED=yes
   echo
   echo "$(sa_ts) Interrupted."

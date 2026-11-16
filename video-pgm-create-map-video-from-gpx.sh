@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.160000 - multi-choice prompts use shared script_arrow_menu (Up/Down)
 # v. 20261014.093800 - a merged file's map clock follows each source clip
 # v. 20261007.143052 - video lengths in the plan are whole seconds
 # v. 20261007.142732 - done and summary times are whole seconds
@@ -192,6 +193,38 @@ mv_colors() {
     C_C=$'\e[36m'
     C_0=$'\e[0m'
   fi
+  if declare -F script_colors_init >/dev/null 2>&1; then
+    if [[ -n "$C_G" ]]; then
+      SCRIPT_USE_COLORS=1
+    else
+      SCRIPT_USE_COLORS=0
+    fi
+    script_colors_init
+  fi
+}
+
+mv_choice() {
+  local c="${1,,}"
+  c="${c//$'\r'/}"
+  c="${c//$'\n'/}"
+  printf '%s' "$c"
+}
+
+mv_arrow_menu_restore_tty() {
+  if declare -F script_arrow_menu_restore_tty >/dev/null 2>&1; then
+    script_arrow_menu_restore_tty
+  fi
+}
+
+mv_arrow_menu() {
+  mv_colors
+  if declare -F script_arrow_menu >/dev/null 2>&1; then
+    script_arrow_menu "$@"
+    return $?
+  fi
+  echo "$(mv_ts) script_arrow_menu missing — update _script_header.sh." >&2
+  REPLY="$(mv_choice "${1:-}")"
+  return 1
 }
 
 mv_rule() {
@@ -1046,16 +1079,15 @@ mv_cur_mark() {
 }
 
 mv_yes_no() {
-  local question="$1" cur="$2" yes_text="$3" no_text="$4" def=n keys
+  local question="$1" cur="$2" yes_text="$3" no_text="$4" def=n
   (( cur )) && def=y
-  keys="$(mv_keys "$def" y n q)"
-  printf '%s [%s]\n' "$question" "$keys"
-  echo "  [$(mv_k y "$def")] Yes$(mv_cur_mark y "$def")"
-  echo "      ${yes_text}"
-  echo "  [$(mv_k n "$def")] No$(mv_cur_mark n "$def")"
-  echo "      ${no_text}"
-  echo "  [q] Quit the script, render nothing more"
-  mv_read_key "${question%\?} [${keys}]: " "$def"
+  echo "$question"
+  echo
+  mv_arrow_menu "$def" \
+    "y|Yes — ${yes_text}" \
+    "n|No — ${no_text}" \
+    "q|Quit"
+  REPLY="$(mv_choice "$REPLY")"
   case "$REPLY" in
     y) REPLY=1 ;;
     n) REPLY=0 ;;
@@ -1095,15 +1127,14 @@ mv_prompt_more() {
   local ddef=n nkeys
   (( TRACK_UP )) && ddef=t
   nkeys="$(mv_keys "$ddef" n t q)"
-  printf 'Map direction [%s]\n' "$nkeys"
-  echo "  [$(mv_k n "$ddef")] North up$(mv_cur_mark n "$ddef")"
-  echo "      North is always at the top, like a paper map; the arrow turns with the road."
-  echo "  [$(mv_k t "$ddef")] Track up$(mv_cur_mark t "$ddef")"
-  echo "      The map turns so the road ahead is always up and the arrow points up,"
-  echo "      like a car navigation. A small compass in the top right shows north."
-  echo "      Renders about 4 times slower (every frame is rotated): about real time."
-  echo "  [q] Quit the script, render nothing more"
-  mv_read_key "Map direction [${nkeys}]: " "$ddef"
+  echo "Map direction?"
+  echo "  Track up renders about 4× slower (every frame is rotated)."
+  echo
+  mv_arrow_menu "$ddef" \
+    "n|North up — north at the top" \
+    "t|Track up — road ahead always up" \
+    "q|Quit"
+  REPLY="$(mv_choice "$REPLY")"
   case "$REPLY" in
     n) TRACK_UP=0 ;;
     t) TRACK_UP=1 ;;
@@ -1155,13 +1186,14 @@ mv_prompt_smooth() {
   (( SMOOTH )) || return 0
 
   echo
-  printf 'Tweak the smoothing? [y/N/q]\n'
-  echo "  [y] Yes"
-  echo "      Set how strong the smoothing is, one value at a time."
-  echo "  [N] No (current, default)"
-  echo "      Keep: $(mv_smooth_label | sed 's/^smoothed: //')."
-  echo "  [q] Quit the script, render nothing more"
-  mv_read_key "Tweak the smoothing [y/N/q]: " n
+  echo "Tweak the smoothing?"
+  echo "  Current: $(mv_smooth_label | sed 's/^smoothed: //')."
+  echo
+  mv_arrow_menu n \
+    "y|Yes — set smoothing values one at a time" \
+    "n|No — keep current smoothing (default)" \
+    "q|Quit"
+  REPLY="$(mv_choice "$REPLY")"
   case "$REPLY" in
     y) ;;
     q) mv_quit ;;
@@ -1231,15 +1263,17 @@ mv_prompt_test() {
     esac
   fi
   echo
-  echo "How much of each video should get its map? [$(mv_keys "$key" a 1 2 5 c q)]"
+  echo "How much of each video should get its map?"
   echo "  A part is saved under its own -test-… name, so a full map video is kept."
-  echo "  [$(mv_k a "$key")] All of it, start to end$(mv_cur_mark a "$key")"
-  echo "  [1] 1 minute$(mv_cur_mark 1 "$key")"
-  echo "  [2] 2 minutes$(mv_cur_mark 2 "$key")"
-  echo "  [5] 5 minutes$(mv_cur_mark 5 "$key")"
-  echo "  [$(mv_k c "$key")] Custom length, typed next$(mv_cur_mark c "$key")"
-  echo "  [q] Quit the script, render nothing more"
-  mv_read_key "Length [$(mv_keys "$key" a 1 2 5 c q)]: " "$key"
+  echo
+  mv_arrow_menu "$key" \
+    "a|All of it, start to end" \
+    "1|1 minute" \
+    "2|2 minutes" \
+    "5|5 minutes" \
+    "c|Custom length (typed next)" \
+    "q|Quit"
+  REPLY="$(mv_choice "$REPLY")"
   case "$REPLY" in
     a) LENGTH="" FROM=0; mv_update_test; return 0 ;;
     1) LENGTH=60 ;;
@@ -1286,14 +1320,14 @@ mv_prompt_old() {
   OLD_ASKED=1
   [[ "$OLD_MODE" == delete ]] && key=d
   echo
-  echo "What should happen to the old map video when the new one is done? [$(mv_keys "$key" k d q)]"
-  echo "  The new video is written to a .partial file first; the old file is"
-  echo "  only touched after the new one has finished without errors."
-  echo "  [$(mv_k k "$key")] Keep it, renamed with the date and time it was made$(mv_cur_mark k "$key")"
-  echo "      For example ..._old-20261005_221400.mp4 beside the new file."
-  echo "  [$(mv_k d "$key")] Delete it$(mv_cur_mark d "$key")"
-  echo "  [q] Quit the script, render nothing more"
-  mv_read_key "Old file [$(mv_keys "$key" k d q)]: " "$key"
+  echo "What should happen to the old map video when the new one is done?"
+  echo "  The new video is written to a .partial file first."
+  echo
+  mv_arrow_menu "$key" \
+    "k|Keep it, renamed with the date and time" \
+    "d|Delete it" \
+    "q|Quit"
+  REPLY="$(mv_choice "$REPLY")"
   case "$REPLY" in
     k) OLD_MODE=keep ;;
     d) OLD_MODE=delete ;;
@@ -1309,17 +1343,13 @@ mv_prompt_existing() {
   done
   (( skip == 0 )) && return 0
   echo
-  printf '%s%d video(s) already have a map video. What should happen to them? [S/r/q]%s\n' "$C_B" "$skip" "$C_0"
-  echo "  [S] Skip them, keep the old files as they are (default)"
-  if (( TO_RENDER > 0 )); then
-    echo "      Only the ${TO_RENDER} new map video(s) are rendered."
-  else
-    echo "      Nothing is rendered."
-  fi
-  echo "  [r] Render them again too"
-  echo "      What happens to each old file is asked next."
-  echo "  [q] Quit the script, render nothing"
-  mv_read_key "Already rendered [S/r/q]: " s
+  printf '%s%d video(s) already have a map video.%s\n' "$C_B" "$skip" "$C_0"
+  echo
+  mv_arrow_menu s \
+    "s|Skip them, keep the old files (default)" \
+    "r|Render them again too" \
+    "q|Quit"
+  REPLY="$(mv_choice "$REPLY")"
   case "$REPLY" in
     s) ;;
     r) REDO=1; mv_prompt_old ;;
@@ -1331,23 +1361,14 @@ mv_prompt_existing() {
 mv_prompt_plan() {
   while true; do
     echo
-    printf '%sRender now? [Y/m/t/q]%s\n' "$C_B" "$C_0"
-    if (( TO_RENDER == 0 && EXISTING > 0 && ! REDO )); then
-      echo "  [Y] Go on (default): there are no new map videos"
-    else
-      echo "  [Y] Download the missing tiles and render the ${TO_RENDER} map video(s) marked above (default)"
-    fi
-    if (( EXISTING > 0 && ! REDO )); then
-      echo "      Then you are asked what to do with the ${EXISTING} already rendered."
-    else
-      echo "      One after another, without asking again."
-    fi
-    echo "  [m] Change the map"
-    echo "      Picture size, zoom, north up or track up, speed, clock, frame rate. The plan is printed again."
-    echo "  [t] Render only part of each video (for a test)"
-    echo "      Pick how long and where it starts. Now: $(mv_window_label)."
-    echo "  [q] Quit the script, render nothing"
-    mv_read_key "Render now? [Y/m/t/q]: " y
+    printf '%sRender now?%s\n' "$C_B" "$C_0"
+    echo
+    mv_arrow_menu y \
+      "y|Download tiles and render ${TO_RENDER} map video(s) (default) — window: $(mv_window_label)" \
+      "m|Change the map settings" \
+      "t|Render only part of each video (test)" \
+      "q|Quit"
+    REPLY="$(mv_choice "$REPLY")"
     case "$REPLY" in
       y)
         if (( REDO )); then
@@ -1662,6 +1683,7 @@ mv_on_exit() {
 }
 
 mv_ctrl_c() {
+  mv_arrow_menu_restore_tty
   STOPPED=yes
   echo
   echo "$(mv_ts) Interrupted."
@@ -1766,12 +1788,13 @@ mv_check_prereqs() {
     exit 1
   fi
   echo
-  printf '%sInstall them now? [Y/n/q]%s\n' "$C_B" "$C_0"
-  echo "  [Y] Yes, install with the command above, then continue (default)"
-  echo "      If that fails, the package lists are refreshed (apt-get update) and it tries once more."
-  echo "  [n] No, stop here; install them yourself and start this script again"
-  echo "  [q] Quit the script"
-  mv_read_key "Install them now? [Y/n/q]: " y
+  printf '%sInstall them now?%s\n' "$C_B" "$C_0"
+  echo
+  mv_arrow_menu y \
+    "y|Yes, install and continue (default)" \
+    "n|No — install yourself and run again" \
+    "q|Quit"
+  REPLY="$(mv_choice "$REPLY")"
   case "$REPLY" in
     y) ;;
     *) echo "$(mv_ts) Nothing installed."; exit 1 ;;

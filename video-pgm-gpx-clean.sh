@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.160000 - multi-choice prompts use shared script_arrow_menu (Up/Down)
 # v. 20261021.142200 - companion helper 0.5: detours + segment splits on huge gaps
 # v. 20261021.141800 - companion helper 0.4: jump filter no longer skips long time gaps
 # v. 20261021.141500 - rename to video-pgm-gpx-clean; match video-pgm plan/summary/old-file flow
@@ -92,6 +93,27 @@ gc_colors() {
     C_C=$'\e[36m'
     C_0=$'\e[0m'
   fi
+  if declare -F script_colors_init >/dev/null 2>&1; then
+    if [[ -n "$C_G" ]]; then SCRIPT_USE_COLORS=1; else SCRIPT_USE_COLORS=0; fi
+    script_colors_init
+  fi
+}
+
+gc_choice() {
+  local c="${1,,}"; c="${c//$'\r'/}"; c="${c//$'\n'/}"; printf '%s' "$c"
+}
+
+gc_arrow_menu_restore_tty() {
+  declare -F script_arrow_menu_restore_tty >/dev/null 2>&1 && script_arrow_menu_restore_tty
+}
+
+gc_arrow_menu() {
+  gc_colors
+  if declare -F script_arrow_menu >/dev/null 2>&1; then
+    script_arrow_menu "$@"; return $?
+  fi
+  echo "$(gc_ts) script_arrow_menu missing — update _script_header.sh." >&2
+  REPLY="$(gc_choice "${1:-}")"; return 1
 }
 
 gc_rule() {
@@ -244,11 +266,13 @@ gc_check_prereqs() {
     exit 1
   fi
   echo
-  printf '%sInstall them now? [Y/n/q]%s\n' "$C_B" "$C_0"
-  echo "  [Y] Yes, install with the command above, then continue (default)"
-  echo "  [n] No, stop here"
-  echo "  [q] Quit the script"
-  gc_read_key "Install them now? [Y/n/q]: " y
+  printf '%sInstall them now?%s\n' "$C_B" "$C_0"
+  echo
+  gc_arrow_menu y \
+    "y|Yes, install and continue (default)" \
+    "n|No — stop here" \
+    "q|Quit"
+  REPLY="$(gc_choice "$REPLY")"
   case "$REPLY" in
     y) ;;
     *) echo "$(gc_ts) Nothing installed."; exit 1 ;;
@@ -396,11 +420,14 @@ gc_prompt_params() {
   gc_heading "Cleaning settings"
   echo "  Defaults are for a car / GoPro track. Enter keeps the value in brackets."
   echo
-  printf 'Tweak the cleaning settings? [y/N/q]\n'
-  echo "  [y] Yes — set max jump, stop collapse, and smooth, one value at a time"
-  echo "  [N] No (default) — keep: max-jump ${MAX_JUMP} km/h, stop ${STOP_KMH} km/h / ${STOP_RADIUS} m, smooth ${SMOOTH} s"
-  echo "  [q] Quit"
-  gc_read_key "Tweak the cleaning settings [y/N/q]: " n
+  echo "Tweak the cleaning settings?"
+  echo "  Defaults: max-jump ${MAX_JUMP} km/h, stop ${STOP_KMH} km/h / ${STOP_RADIUS} m, smooth ${SMOOTH} s"
+  echo
+  gc_arrow_menu n \
+    "y|Yes — set values one at a time" \
+    "n|No — keep defaults (default)" \
+    "q|Quit"
+  REPLY="$(gc_choice "$REPLY")"
   case "$REPLY" in
     y) ;;
     q) gc_quit ;;
@@ -576,13 +603,14 @@ gc_prompt_old() {
   OLD_ASKED=1
   [[ "$OLD_MODE" == delete ]] && key=d
   echo
-  echo "What should happen to the old cleaned .gpx when the new one is written? [$(gc_keys "$key" k d q)]"
-  echo "  The new file is written beside it first. The old file is only touched after that succeeds."
-  echo "  [$(gc_k k "$key")] Keep it, renamed with the date and time it was made$(gc_cur_mark k "$key")"
-  echo "      For example ..._cleaned_old-20261021_140000.gpx beside the new file."
-  echo "  [$(gc_k d "$key")] Delete it$(gc_cur_mark d "$key")"
-  echo "  [q] Quit the script, write nothing more"
-  gc_read_key "Old file [$(gc_keys "$key" k d q)]: " "$key"
+  echo "What should happen to the old cleaned .gpx when the new one is written?"
+  echo "  The new file is written beside it first."
+  echo
+  gc_arrow_menu "$key" \
+    "k|Keep it, renamed with the date and time" \
+    "d|Delete it" \
+    "q|Quit"
+  REPLY="$(gc_choice "$REPLY")"
   case "$REPLY" in
     k) OLD_MODE=keep ;;
     d) OLD_MODE=delete ;;
@@ -598,12 +626,13 @@ gc_prompt_existing() {
   done
   (( skip == 0 )) && return 0
   echo
-  printf '%s%d track(s) already have a cleaned .gpx. What should happen to them? [S/r/q]%s\n' "$C_B" "$skip" "$C_0"
-  echo "  [S] Skip them, keep the old files as they are (default)"
-  echo "  [r] Write them again too"
-  echo "      What happens to each old file is asked next."
-  echo "  [q] Quit the script, write nothing"
-  gc_read_key "Already written [S/r/q]: " s
+  printf '%s%d track(s) already have a cleaned .gpx.%s\n' "$C_B" "$skip" "$C_0"
+  echo
+  gc_arrow_menu s \
+    "s|Skip them (default)" \
+    "r|Write them again too" \
+    "q|Quit"
+  REPLY="$(gc_choice "$REPLY")"
   case "$REPLY" in
     s) ;;
     r)
@@ -638,12 +667,13 @@ gc_prompt_plan() {
   fi
 
   echo
-  printf '%sWrite the cleaned tracks now? [Y/n/q]%s\n' "$C_B" "$C_0"
-  echo "  [Y] Write the ${TO_WRITE} track(s) listed above (default)"
-  (( EXISTING > 0 && ! REDO )) && echo "      After that you are asked about the ${EXISTING} cleaned file(s) that are already there."
-  echo "  [n] No, write nothing (also leave existing cleaned files alone)"
-  echo "  [q] Quit the script"
-  gc_read_key "Write the cleaned tracks now? [Y/n/q]: " y
+  printf '%sWrite the cleaned tracks now?%s\n' "$C_B" "$C_0"
+  echo
+  gc_arrow_menu y \
+    "y|Write ${TO_WRITE} track(s) (default)" \
+    "n|No — write nothing" \
+    "q|Quit"
+  REPLY="$(gc_choice "$REPLY")"
   case "$REPLY" in
     y)
       if (( REDO )); then
@@ -742,6 +772,7 @@ gc_on_exit() {
 }
 
 gc_ctrl_c() {
+  gc_arrow_menu_restore_tty
   STOPPED=yes
   echo
   echo "$(gc_ts) Interrupted."

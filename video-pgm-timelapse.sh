@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.151500 - use shared script_arrow_menu; more prompts use Up/Down
 # v. 20261116.150500 - speed menu: Up/Down arrows + Enter (inline highlight)
 # v. 20261116.143700 - ask Use colors?; green prompts; highlight (default) on menus
 # v. 20261115.200000 - SUMMARY: Family-A chrome + Script/Version at top
@@ -63,6 +64,8 @@
 # v. 20260930.221500 - file prompts: one key, no Ente
 # v. 20260930.220400 - faster viewing copy of a merged video (2, 5, 10, 20, …)
 
+# 2026.11.16 - v. 0.61 - Interactive menus use shared Up/Down arrow selection
+#   (script_arrow_menu); speed menu plus other multi-choice prompts.
 # 2026.11.16 - v. 0.60 - Speed menu: Up/Down moves a highlight, Enter selects; letter keys
 #   still work as before. Non-TTY falls back to the plain one-key list.
 # 2026.11.16 - v. 0.59 - Ask Use colors? at startup (default Yes); green single-key prompts;
@@ -2166,27 +2169,24 @@ tl_prompt_input_files() {
     fi
     local -a key_list=(a)
     def=a
-    script_echo_option "  [A] All (${n}) (default)"
+    local -a arrow_opts=()
+    arrow_opts+=("a|All (${n})")
     if (( front > 0 )); then
-      key_list+=(f)
-      echo "  [f] FrontCam only (${front})"
+      arrow_opts+=("f|FrontCam only (${front})")
     fi
     if (( back > 0 )); then
-      key_list+=(b)
-      echo "  [b] BackCam only (${back})"
+      arrow_opts+=("b|BackCam only (${back})")
     fi
     if (( map > 0 )); then
-      key_list+=(m)
-      echo "  [m] Map only (${map})"
+      arrow_opts+=("m|Map only (${map})")
     fi
     if (( other > 0 )); then
-      key_list+=(o)
-      echo "  [o] Other only (${other})"
+      arrow_opts+=("o|Other only (${other})")
     fi
-    key_list+=(p q)
-    echo "  [p] Pick files..."
-    echo "  [q] Quit"
-    tl_read_key "Videos [$(tl_keys "$def" "${key_list[@]}")]: " "$def"
+    arrow_opts+=("p|Pick files...")
+    arrow_opts+=("q|Quit")
+    echo
+    tl_arrow_menu "$def" "${arrow_opts[@]}"
     choice="$(tl_choice "$REPLY")"
     case "$choice" in
       a|'') ;;
@@ -2226,6 +2226,9 @@ tl_prompt_input_files() {
 TL_ARROW_STTY=""
 
 tl_arrow_menu_restore_tty() {
+  if declare -F script_arrow_menu_restore_tty >/dev/null 2>&1; then
+    script_arrow_menu_restore_tty
+  fi
   printf '\033[?25h' 2>/dev/null || true
   if [[ -n "${TL_ARROW_STTY:-}" ]]; then
     stty "$TL_ARROW_STTY" 2>/dev/null || true
@@ -2233,134 +2236,15 @@ tl_arrow_menu_restore_tty() {
   fi
 }
 
-# Inline Up/Down menu. $1 = default key; remaining args are "key|label".
-# Sets REPLY to the chosen key (lowercase). Arrow keys move the highlight;
-# Enter accepts it; pressing a listed key accepts immediately (same as before).
-# When stdin/stdout are not TTYs, prints a static list and uses tl_read_key.
+# Prefer shared script_arrow_menu from _script_header.sh.
 tl_arrow_menu() {
-  local def_key="$1"
-  shift
-  local -a keys=() labels=()
-  local item i n idx=0
-  local byte="" c2="" c3="" ch="" accepted=0
-  local rows=0
-
-  for item in "$@"; do
-    keys+=("${item%%|*}")
-    labels+=("${item#*|}")
-  done
-  n=${#keys[@]}
-  (( n > 0 )) || {
-    REPLY="$(tl_choice "$def_key")"
-    return 1
-  }
-
-  def_key="$(tl_choice "$def_key")"
-  for (( i = 0; i < n; i++ )); do
-    if [[ "$(tl_choice "${keys[i]}")" == "$def_key" ]]; then
-      idx=$i
-      break
-    fi
-  done
-
-  if [[ ! -t 0 || ! -t 1 ]]; then
-    for (( i = 0; i < n; i++ )); do
-      script_echo_option "  [$(tl_k "${keys[i]}" "$def_key")] ${labels[i]}$(tl_def_mark "${keys[i]}" "$def_key")"
-    done
-    echo
-    tl_read_key "Choice [$(tl_keys "$def_key" "${keys[@]}")]: " "$def_key"
-    REPLY="$(tl_choice "$REPLY")"
-    return 0
+  if declare -F script_arrow_menu >/dev/null 2>&1; then
+    script_arrow_menu "$@"
+    return $?
   fi
-
-  tl_arrow_menu_draw() {
-    local j line key_disp mark
-    for (( j = 0; j < n; j++ )); do
-      key_disp="$(tl_k "${keys[j]}" "$def_key")"
-      mark="$(tl_def_mark "${keys[j]}" "$def_key")"
-      if (( j == idx )); then
-        if (( SCRIPT_USE_COLORS )); then
-          printf ' %s>%s [%s] %s%s%s%s\n' \
-            "$SCRIPT_C_G" "$SCRIPT_C_0" "$key_disp" \
-            "$SCRIPT_C_G" "${labels[j]}" "$mark" "$SCRIPT_C_0"
-        else
-          printf ' > [%s] %s%s\n' "$key_disp" "${labels[j]}" "$mark"
-        fi
-      else
-        line="   [${key_disp}] ${labels[j]}${mark}"
-        script_echo_option "$line"
-      fi
-    done
-    echo
-    if (( SCRIPT_USE_COLORS )); then
-      printf '  %sUp/Down move · Enter select · or press a listed key%s\n' \
-        "$SCRIPT_C_G" "$SCRIPT_C_0"
-    else
-      echo "  Up/Down move · Enter select · or press a listed key"
-    fi
-  }
-
-  TL_ARROW_STTY="$(stty -g 2>/dev/null || true)"
-  stty -echo -icanon min 1 time 0 2>/dev/null || true
-  printf '\033[?25l'
-  tl_flush_stdin
-  tl_arrow_menu_draw
-  rows=$((n + 2))
-
-  while (( ! accepted )); do
-    byte=""
-    IFS= read -r -n 1 byte || byte=""
-    if [[ "$byte" == $'\033' ]]; then
-      c2=""
-      c3=""
-      IFS= read -r -t 0.05 -n 1 c2 || c2=""
-      if [[ "$c2" == '[' || "$c2" == 'O' ]]; then
-        IFS= read -r -t 0.05 -n 1 c3 || c3=""
-        case "$c3" in
-          A)
-            if (( idx > 0 )); then
-              idx=$((idx - 1))
-            fi
-            printf '\033[%dA' "$rows"
-            tl_arrow_menu_draw
-            continue
-            ;;
-          B)
-            if (( idx < n - 1 )); then
-              idx=$((idx + 1))
-            fi
-            printf '\033[%dA' "$rows"
-            tl_arrow_menu_draw
-            continue
-            ;;
-        esac
-      fi
-      continue
-    fi
-
-    # Enter (newline / CR) or empty read after delimiter → accept highlight.
-    if [[ -z "$byte" || "$byte" == $'\n' || "$byte" == $'\r' ]]; then
-      REPLY="$(tl_choice "${keys[idx]}")"
-      accepted=1
-      break
-    fi
-
-    ch="$(tl_choice "$byte")"
-    for (( i = 0; i < n; i++ )); do
-      if [[ "$(tl_choice "${keys[i]}")" == "$ch" ]]; then
-        idx=$i
-        REPLY="$ch"
-        accepted=1
-        printf '\033[%dA' "$rows"
-        tl_arrow_menu_draw
-        break
-      fi
-    done
-  done
-
-  tl_arrow_menu_restore_tty
-  echo
-  return 0
+  echo "$(tl_ts) script_arrow_menu missing — update _script_header.sh." >&2
+  REPLY="$(tl_choice "${1:-}")"
+  return 1
 }
 
 tl_flush_stdin() {
@@ -2650,15 +2534,16 @@ tl_prompt_existing_output() {
   aside="$(tl_aside_name "$dest")"
   next="$(tl_next_take_name "$dest")"
   echo
-  echo "This file was not encoded. [K/r/m/n/q]"
-  script_echo_option "  [K] Keep it and skip (default)"
-  echo "  [r] Replace it with this encode"
-  echo "  [m] Rename it, then encode to the usual name"
-  echo "      ${aside##*/}"
-  echo "  [n] Leave it, and write this encode under a new name"
-  echo "      ${next##*/}"
-  echo "  [q] Quit"
-  tl_read_key "Existing file [K/r/m/n/q]: " k
+  echo "This file was not encoded."
+  echo "  Rename aside: ${aside##*/}"
+  echo "  New name:     ${next##*/}"
+  echo
+  tl_arrow_menu k \
+    "k|Keep it and skip" \
+    "r|Replace it with this encode" \
+    "m|Rename it, then encode to the usual name" \
+    "n|Leave it, and write this encode under a new name" \
+    "q|Quit"
   choice="$(tl_choice "$REPLY")"
   case "$choice" in
     k)
@@ -2706,12 +2591,13 @@ tl_prompt_before_files() {
     return 0
   fi
   echo
-  echo "Encode these files? [A/y/n/q]"
-  script_echo_option "  [A] Encode all ${total} files (default)"
-  echo "  [y] Encode the first file, then ask again"
-  echo "  [n] Don't encode"
-  echo "  [q] Quit"
-  tl_read_key "Encode these files? [A/y/n/q]: " a
+  echo "Encode these files?"
+  echo
+  tl_arrow_menu a \
+    "a|Encode all ${total} files" \
+    "y|Encode the first file, then ask again" \
+    "n|Do not encode" \
+    "q|Quit"
   choice="$(tl_choice "$REPLY")"
   case "$choice" in
     ''|a)
@@ -2754,12 +2640,13 @@ tl_prompt_continue_after_file() {
     span="file ${next} of ${total} through file ${total} of ${total}"
   fi
   echo
-  echo "Continue? [N/y/a/q]"
-  script_echo_option "  [N] Stop after this file (default)"
-  echo "  [y] Encode the next file, then ask again"
-  echo "  [a] Encode all remaining files (${span})"
-  echo "  [q] Quit"
-  tl_read_key "Continue [N/y/a/q]: " n
+  echo "Continue?"
+  echo
+  tl_arrow_menu n \
+    "n|Stop after this file" \
+    "y|Encode the next file, then ask again" \
+    "a|Encode all remaining files (${span})" \
+    "q|Quit"
   choice="$(tl_choice "$REPLY")"
   case "$choice" in
     ''|n)
@@ -4211,7 +4098,11 @@ if (( script_is_run_interactively )) && (( ! DO_YES )); then
   tl_prompt_advanced
   while true; do
     tl_print_plan
-    tl_read_key "Proceed with these choices? [Y/n/q]: " y
+    echo
+  tl_arrow_menu y \
+    "y|Yes — encode" \
+    "n|No — ask again" \
+    "q|Quit"
     case "$(tl_choice "$REPLY")" in
       y)
         break

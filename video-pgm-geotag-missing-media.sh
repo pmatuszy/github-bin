@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.160000 - multi-choice prompts use shared script_arrow_menu (Up/Down)
 # v. 20261021.103947 - Equivalent / Usage show the live script name, not .deleteme.*.seal.*
 # v. 20261021.103731 - conf name from the live script path, not the .deleteme.*.seal.* copy; dedupe conf lookup dirs
 # v. 20261021.102204 - when no named places are loaded, say HOME and which conf directories were looked in
@@ -525,6 +526,27 @@ gm_colors() {
     C_BL=$'\e[94m'
     C_0=$'\e[0m'
   fi
+  if declare -F script_colors_init >/dev/null 2>&1; then
+    if (( USE_COLOR )); then SCRIPT_USE_COLORS=1; else SCRIPT_USE_COLORS=0; fi
+    script_colors_init
+  fi
+}
+
+gm_choice() {
+  local c="${1,,}"; c="${c//$'\r'/}"; c="${c//$'\n'/}"; printf '%s' "$c"
+}
+
+gm_arrow_menu_restore_tty() {
+  declare -F script_arrow_menu_restore_tty >/dev/null 2>&1 && script_arrow_menu_restore_tty
+}
+
+gm_arrow_menu() {
+  gm_colors
+  if declare -F script_arrow_menu >/dev/null 2>&1; then
+    script_arrow_menu "$@"; return $?
+  fi
+  echo "$(gm_ts) script_arrow_menu missing — update _script_header.sh." >&2
+  REPLY="$(gm_choice "${1:-}")"; return 1
 }
 
 gm_green() {
@@ -680,11 +702,12 @@ gm_ask_internet() {
   fi
   echo
   echo "A track point or a typed latitude and longitude can be named from OpenStreetMap."
-  echo "  [Y] Yes, use the internet (default)"
-  echo "  [n] No"
-  echo "  [q] Quit"
-  gm_read_key "Look up place names on the internet? [Y/n/q]: " y "Yes, use the internet"
-  reply="$REPLY"
+  echo
+  gm_arrow_menu y \
+    "y|Yes, use the internet (default)" \
+    "n|No" \
+    "q|Quit"
+  reply="$(gm_choice "$REPLY")"
   case "$reply" in
     y) USE_NET=1 ;;
     n) USE_NET=0; echo "$(gm_ts) Place names will not be looked up." ;;
@@ -1186,11 +1209,12 @@ gm_ask_colors() {
   fi
   echo
   echo "Use colors?"
-  echo "  [Y] Yes (default)"
-  echo "  [n] No"
-  echo "  [q] Quit"
-  gm_read_key "Choice [Y/n/q]: " y "Yes"
-  reply="$REPLY"
+  echo
+  gm_arrow_menu y \
+    "y|Yes (default)" \
+    "n|No" \
+    "q|Quit"
+  reply="$(gm_choice "$REPLY")"
   case "$reply" in
     y) USE_COLOR=1 ;;
     n) USE_COLOR=0 ;;
@@ -1211,11 +1235,12 @@ gm_ask_verbose() {
   fi
   echo
   echo "The report can list every track, and every photo or video."
-  echo "  [N] No, totals only (default)"
-  echo "  [v] Yes, list each file"
-  echo "  [q] Quit"
-  gm_read_key "Verbose output? [N/v/q]: " n "No, totals only"
-  reply="$REPLY"
+  echo
+  gm_arrow_menu n \
+    "n|No, totals only (default)" \
+    "v|Yes, list each file" \
+    "q|Quit"
+  reply="$(gm_choice "$REPLY")"
   case "$reply" in
     n) VERBOSE=0 ;;
     v) VERBOSE=1 ;;
@@ -1252,13 +1277,12 @@ gm_ask_scope() {
     echo "  [A] All subdirectories (default)"
     echo "  [c] Current directory only"
   fi
-  echo "  [q] Quit"
-  if (( ${#DIR_INPUTS[@]} > 1 )); then
-    gm_read_key "Current directories or all subdirectories? [A/c/q]: " a "All subdirectories"
-  else
-    gm_read_key "Current directory or all subdirectories? [A/c/q]: " a "All subdirectories"
-  fi
-  reply="$REPLY"
+  echo
+  gm_arrow_menu a \
+    "a|All subdirectories (default)" \
+    "c|Current directory only" \
+    "q|Quit"
+  reply="$(gm_choice "$REPLY")"
   case "$reply" in
     c) RECURSE=0 ;;
     a) RECURSE=1 ;;
@@ -1301,12 +1325,13 @@ gm_ask_tz() {
   echo "GPX and TCX times are UTC. A GPSData*.txt time is the clip name plus the log number."
   echo "That clock is already on this offset. A camera time with no timezone is shifted by it too."
   echo "Polish summer time is +02:00. Use 0 when the camera clock is already UTC."
-  echo "  [2] +02:00 (default)"
-  echo "  [0] camera clock is UTC"
-  echo "  [a] type another offset"
-  echo "  [q] Quit"
-  gm_read_key "Camera offset from UTC? [2/0/a/q]: " 2 "+02:00"
-  reply="$REPLY"
+  echo
+  gm_arrow_menu 2 \
+    "2|+02:00 (default)" \
+    "0|Camera clock is UTC" \
+    "a|Type another offset" \
+    "q|Quit"
+  reply="$(gm_choice "$REPLY")"
   case "$reply" in
     2) TZ_VALUE="+02:00" ;;
     0) TZ_VALUE="+00:00" ;;
@@ -1670,19 +1695,26 @@ gm_ask_track_years() {
     echo "The photos and videos run from ${SMART_FIRST} to ${SMART_LAST}."
     echo "Smart loading reads tracks from one week before that to one week after:"
     echo "${SMART_FROM} through ${SMART_TO}."
-    echo "  [S] Smart loading, ${SMART_FROM} through ${SMART_TO} (default)"
-    echo "  [d] Smart loading, choose the days before and after"
-    prompt="S/d/t/a/q"
+    echo "Which tracks?"
+    echo
     if (( ${#GUESS_YEARS[@]} )); then
       phrase="$(gm_year_phrase "${GUESS_YEARS[@]}")"
-      echo "  [y] ${phrase} only"
-      prompt="S/d/y/t/a/q"
+      gm_arrow_menu s \
+        "s|Smart loading, ${SMART_FROM} through ${SMART_TO} (default)" \
+        "d|Smart loading — choose days before and after" \
+        "y|${phrase} only" \
+        "t|Type a year" \
+        "a|All years" \
+        "q|Quit"
+    else
+      gm_arrow_menu s \
+        "s|Smart loading, ${SMART_FROM} through ${SMART_TO} (default)" \
+        "d|Smart loading — choose days before and after" \
+        "t|Type a year" \
+        "a|All years" \
+        "q|Quit"
     fi
-    echo "  [t] Type a year"
-    echo "  [a] All years"
-    echo "  [q] Quit"
-    gm_read_key "Which tracks? [${prompt}]: " s "Smart loading, ${SMART_FROM} through ${SMART_TO}"
-    reply="$REPLY"
+    reply="$(gm_choice "$REPLY")"
     case "$reply" in
       s) gm_set_smart_span ;;
       d)
@@ -1716,12 +1748,14 @@ gm_ask_track_years() {
   if (( ${#GUESS_YEARS[@]} )); then
     phrase="$(gm_year_phrase "${GUESS_YEARS[@]}")"
     echo "The photos and videos look like they are probably from ${phrase}, judging by the timestamps and file names."
-    echo "  [Y] ${phrase} only (default)"
-    echo "  [t] Type a year"
-    echo "  [a] All years"
-    echo "  [q] Quit"
-    gm_read_key "Which tracks? [Y/t/a/q]: " y "${phrase} only"
-    reply="$REPLY"
+    echo "Which tracks?"
+    echo
+    gm_arrow_menu y \
+      "y|${phrase} only (default)" \
+      "t|Type a year" \
+      "a|All years" \
+      "q|Quit"
+    reply="$(gm_choice "$REPLY")"
     case "$reply" in
       y) gm_set_guess_years "${GUESS_YEARS[@]}" ;;
       t) gm_ask_typed_year ;;
@@ -1731,11 +1765,13 @@ gm_ask_track_years() {
     esac
   else
     echo "No year in these file names."
-    echo "  [A] All years (default)"
-    echo "  [t] Type a year"
-    echo "  [q] Quit"
-    gm_read_key "Which tracks? [A/t/q]: " a "All years"
-    reply="$REPLY"
+    echo "Which tracks?"
+    echo
+    gm_arrow_menu a \
+      "a|All years (default)" \
+      "t|Type a year" \
+      "q|Quit"
+    reply="$(gm_choice "$REPLY")"
     case "$reply" in
       a) gm_set_all_years ;;
       t) gm_ask_typed_year ;;
@@ -2640,9 +2676,12 @@ gm_ask_backup() {
       echo "      $(gm_backup_stored_name "$path" "$stamp")"
     done
   fi
-  echo "  [q] Quit"
-  gm_read_key "Backup the old files? [N/b/q]: " n "No backup"
-  reply="$REPLY"
+  echo
+  gm_arrow_menu n \
+    "n|No backup (default)" \
+    "b|Yes — dated backup files" \
+    "q|Quit"
+  reply="$(gm_choice "$REPLY")"
   case "$reply" in
     n) BACKUP=0 ;;
     b) BACKUP=1 ;;
@@ -2657,11 +2696,12 @@ gm_ask_update() {
     return 0
   fi
   echo
-  echo "  [Y] Yes (default)"
-  echo "  [n] No"
-  echo "  [q] Quit"
-  gm_read_key "Update these files? [Y/n/q]: " y "Yes"
-  reply="$REPLY"
+  echo
+  gm_arrow_menu y \
+    "y|Yes (default)" \
+    "n|No" \
+    "q|Quit"
+  reply="$(gm_choice "$REPLY")"
   case "$reply" in
     y) return 0 ;;
     n)
@@ -2925,6 +2965,7 @@ gm_cleanup() {
 }
 
 gm_ctrl_c() {
+  gm_arrow_menu_restore_tty
   echo
   echo "$(gm_ts) Interrupted. Nothing more was written."
   return_code=130

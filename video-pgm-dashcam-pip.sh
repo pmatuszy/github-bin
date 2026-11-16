@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.160000 - multi-choice prompts use shared script_arrow_menu (Up/Down)
 # v. 20261008.220551 - a map matches the journey and speed, not the encode stamp; ask when real time and timelapse are both present
 # v. 20261007.143052 - summary times and video lengths are whole seconds
 # v. 20261006.230553 - a picture-in-picture file with no location gets the first point of the front .gpx
@@ -231,6 +232,38 @@ pip_colors() {
     C_C=$'\e[36m'
     C_0=$'\e[0m'
   fi
+  if declare -F script_colors_init >/dev/null 2>&1; then
+    if [[ -n "$C_G" ]]; then
+      SCRIPT_USE_COLORS=1
+    else
+      SCRIPT_USE_COLORS=0
+    fi
+    script_colors_init
+  fi
+}
+
+pip_choice() {
+  local c="${1,,}"
+  c="${c//$'\r'/}"
+  c="${c//$'\n'/}"
+  printf '%s' "$c"
+}
+
+pip_arrow_menu_restore_tty() {
+  if declare -F script_arrow_menu_restore_tty >/dev/null 2>&1; then
+    script_arrow_menu_restore_tty
+  fi
+}
+
+pip_arrow_menu() {
+  pip_colors
+  if declare -F script_arrow_menu >/dev/null 2>&1; then
+    script_arrow_menu "$@"
+    return $?
+  fi
+  echo "$(pip_ts) script_arrow_menu missing — update _script_header.sh." >&2
+  REPLY="$(pip_choice "${1:-}")"
+  return 1
 }
 
 pip_rule() {
@@ -743,34 +776,31 @@ pip_prompt_speeds() {
   else
     echo "$(pip_ts) This folder has more than one sped-up speed."
   fi
-  if (( ${#tl[@]} == 1 )); then
-    echo "  [$(pip_k t t)] Timelapse only (${tl_label}) (default)"
-  else
-    echo "  [$(pip_k t t)] All timelapse (${tl_label}) (default)"
-  fi
-  echo "      $(pip_speed_count_label "${tl[@]}")"
+  local -a menu_opts=()
   keys=(t)
+  if (( ${#tl[@]} == 1 )); then
+    menu_opts+=("t|Timelapse only (${tl_label}) (default) — $(pip_speed_count_label "${tl[@]}")")
+  else
+    menu_opts+=("t|All timelapse (${tl_label}) (default) — $(pip_speed_count_label "${tl[@]}")")
+  fi
   if (( ${#tl[@]} > 1 )); then
     for s in "${tl[@]}"; do
       key="$(pip_speed_menu_key "$s" "${used[@]}")" || continue
       used+=("$key")
       key_speed[$key]="$s"
       keys+=("$key")
-      echo "  [$(pip_k "$key" t)] x${s} only"
-      echo "      $(pip_speed_count_label "$s")"
+      menu_opts+=("${key}|x${s} only — $(pip_speed_count_label "$s")")
     done
   fi
   if (( ${#real[@]} > 0 )); then
     keys+=(a r)
-    echo "  [$(pip_k a t)] Also the real-time videos"
-    echo "      Timelapse and real time, each speed paired with itself. $(pip_speed_count_label "${speeds[@]}")"
-    echo "  [$(pip_k r t)] Real time only"
-    echo "      $(pip_speed_count_label "${real[@]}")"
+    menu_opts+=("a|Also the real-time videos — $(pip_speed_count_label "${speeds[@]}")")
+    menu_opts+=("r|Real time only — $(pip_speed_count_label "${real[@]}")")
   fi
-  keys+=(q)
-  echo "  [q] Quit"
-  pip_read_key "Which videos? [$(pip_keys t "${keys[@]}")]: " t
-  choice="$REPLY"
+  menu_opts+=("q|Quit")
+  echo
+  pip_arrow_menu t "${menu_opts[@]}"
+  choice="$(pip_choice "$REPLY")"
   case "$choice" in
     t|'')
       pip_keep_speeds "${tl[@]}"
@@ -1023,14 +1053,15 @@ pip_prompt_old() {
   OLD_ASKED=1
   [[ "$OLD_MODE" == delete ]] && key=d
   echo
-  echo "What should happen to the old file when the new one is done? [$(pip_keys "$key" k d q)]"
+  echo "What should happen to the old file when the new one is done?"
   echo "  The new video is written to a .partial file first; the old file is"
   echo "  only touched after the new one has finished without errors."
-  echo "  [$(pip_k k "$key")] Keep it, renamed with the date and time it was made$(pip_cur_mark k "$key")"
-  echo "      For example ..._old-20261005_221400.mp4 beside the new file."
-  echo "  [$(pip_k d "$key")] Delete it$(pip_cur_mark d "$key")"
-  echo "  [q] Quit the script, render nothing more"
-  pip_read_key "Old file [$(pip_keys "$key" k d q)]: " "$key"
+  echo
+  pip_arrow_menu "$key" \
+    "k|Keep it, renamed with the date and time (e.g. ..._old-20261005_221400.mp4)" \
+    "d|Delete it" \
+    "q|Quit"
+  REPLY="$(pip_choice "$REPLY")"
   case "$REPLY" in
     k) OLD_MODE=keep ;;
     d) OLD_MODE=delete ;;
@@ -1047,20 +1078,19 @@ pip_prompt_existing() {
   done
   (( skip == 0 )) && return 0
   echo
-  printf '%s%d route(s) already rendered. What should happen to them? [S/r/c/q]%s\n' "$C_B" "$skip" "$C_0"
-  echo "  [S] Skip them, keep the old files as they are (default)"
+  printf '%s%d route(s) already rendered. What should happen to them?%s\n' "$C_B" "$skip" "$C_0"
   if (( TO_RENDER > 0 )); then
-    echo "      Only the ${TO_RENDER} new route(s) are rendered."
+    echo "  Only the ${TO_RENDER} new route(s) would be rendered if you skip."
   else
-    echo "      Nothing is rendered."
+    echo "  Nothing would be rendered if you skip."
   fi
-  echo "  [r] Render them again too"
-  echo "      All $(( TO_RENDER + skip )) route(s) are rendered. What happens to each old file is asked next."
-  echo "  [c] Ask for each one"
-  echo "      New routes are rendered without asking; for each existing route its"
-  echo "      plan is printed and you choose."
-  echo "  [q] Quit the script, render nothing"
-  pip_read_key "Already rendered [S/r/c/q]: " s
+  echo
+  pip_arrow_menu s \
+    "s|Skip them, keep the old files (default)" \
+    "r|Render them again too — all $(( TO_RENDER + skip )) route(s)" \
+    "c|Ask for each existing route" \
+    "q|Quit"
+  REPLY="$(pip_choice "$REPLY")"
   case "$REPLY" in
     s) ;;
     r) REDO=1; pip_prompt_old ;;
@@ -1074,15 +1104,14 @@ pip_prompt_existing() {
 pip_prompt_existing_route() {
   local ri="$1" total="$2" f="$3" out="${ROUTE_OUT[$3]}"
   echo
-  printf '%sRoute %d of %d is already rendered (%s). [S/r/a/q]%s\n' "$C_B" "$ri" "$total" "$(pip_existing_info "$out")" "$C_0"
-  echo "  [S] Skip it, keep the old file (default)"
-  echo "  [r] Render it again"
-  echo "      What happens to the old file is asked once, the first time."
-  echo "  [a] Render this and every remaining route, asking nothing more"
-  echo "      Remaining routes that already exist are rendered again too."
-  echo "  [q] Quit: stop here and render nothing more"
-  echo "      Routes already rendered in this run are kept."
-  pip_read_key "Route ${ri} of ${total} [S/r/a/q]: " s
+  printf '%sRoute %d of %d is already rendered (%s).%s\n' "$C_B" "$ri" "$total" "$(pip_existing_info "$out")" "$C_0"
+  echo
+  pip_arrow_menu s \
+    "s|Skip it, keep the old file (default)" \
+    "r|Render it again" \
+    "a|Render this and every remaining route" \
+    "q|Quit"
+  REPLY="$(pip_choice "$REPLY")"
   case "$REPLY" in
     r) pip_prompt_old; return 0 ;;
     a) REDO=1 CHOOSE=0 EXIST_ASK=0; pip_prompt_old; return 0 ;;
@@ -2179,16 +2208,15 @@ pip_ask_line() {
 
 # Question, current 0/1, what yes means, what no means.
 pip_yes_no() {
-  local question="$1" cur="$2" yes_text="$3" no_text="$4" def=n keys
+  local question="$1" cur="$2" yes_text="$3" no_text="$4" def=n
   (( cur )) && def=y
-  keys="$(pip_keys "$def" y n q)"
-  printf '%s [%s]\n' "$question" "$keys"
-  echo "  [$(pip_k y "$def")] Yes$(pip_cur_mark y "$def")"
-  echo "      ${yes_text}"
-  echo "  [$(pip_k n "$def")] No$(pip_cur_mark n "$def")"
-  echo "      ${no_text}"
-  echo "  [q] Quit the script, render nothing more"
-  pip_read_key "${question%\?} [${keys}]: " "$def"
+  echo "$question"
+  echo
+  pip_arrow_menu "$def" \
+    "y|Yes — ${yes_text}" \
+    "n|No — ${no_text}" \
+    "q|Quit"
+  REPLY="$(pip_choice "$REPLY")"
   case "$REPLY" in
     y) REPLY=1 ;;
     n) REPLY=0 ;;
@@ -2224,14 +2252,16 @@ pip_prompt_more() {
 
   echo
   case "$CORNER" in tr) key=2 ;; ll) key=3 ;; lr) key=4 ;; *) key=1 ;; esac
-  echo "Which corner of the frame should the inset sit in? [1/2/3/4/q]"
+  echo "Which corner of the frame should the inset sit in?"
   echo "  The margins asked next are measured from that corner's two edges."
-  echo "  [1] Top left$([[ $key == 1 ]] && printf ' (current, default)')"
-  echo "  [2] Top right$([[ $key == 2 ]] && printf ' (current, default)')"
-  echo "  [3] Lower left$([[ $key == 3 ]] && printf ' (current, default)')"
-  echo "  [4] Lower right$([[ $key == 4 ]] && printf ' (current, default)')"
-  echo "  [q] Quit the script, render nothing more"
-  pip_read_key "Corner [1/2/3/4/q] (Enter = ${key}): " "$key"
+  echo
+  pip_arrow_menu "$key" \
+    "1|Top left" \
+    "2|Top right" \
+    "3|Lower left" \
+    "4|Lower right" \
+    "q|Quit"
+  REPLY="$(pip_choice "$REPLY")"
   case "$REPLY" in
     1) CORNER=tl ;;
     2) CORNER=tr ;;
@@ -2353,17 +2383,14 @@ pip_prompt_more() {
 
 pip_prompt_more_first() {
   echo
-  printf '%sMore choices? [N/y/q]%s\n' "$C_B" "$C_0"
-  echo "  [N] Keep the current layout (default)"
-  echo "      $(pip_size_label), $(pip_corner_label), margins $(pip_margins_label), extras: $(pip_extras_label)."
-  echo "      Map: $(pip_map_settings_label)."
-  echo "      The plan is printed next, and nothing is rendered before you agree."
-  echo "  [y] Change the layout first"
-  echo "      Asks, one at a time: inset size, corner, margins, mirror, crop,"
-  echo "      border, caption, swap, black gap box, output width, and the map."
-  echo "      Enter keeps each current answer."
-  echo "  [q] Quit the script, render nothing"
-  pip_read_key "More choices? [N/y/q]: " n
+  printf '%sMore choices?%s\n' "$C_B" "$C_0"
+  echo "  Current: $(pip_size_label), $(pip_corner_label), map: $(pip_map_settings_label)."
+  echo
+  pip_arrow_menu n \
+    "n|Keep the current layout (default)" \
+    "y|Change the layout first (more questions)" \
+    "q|Quit"
+  REPLY="$(pip_choice "$REPLY")"
   case "$REPLY" in
     y) pip_prompt_more ;;
     q) pip_quit ;;
@@ -2382,17 +2409,16 @@ pip_prompt_map_choice() {
     fi
   done
   echo
-  printf '%sMap video: %d of %d route(s) have more than one map. Which should be used? [%s]%s\n' \
-    "$C_B" "$MAP_MULTI" "${#MAP_ROUTES[@]}" "$(pip_keys "$key" n p s q)" "$C_0"
-  echo "  [$(pip_k n "$key")] The newest map of each route$(pip_cur_mark n "$key")"
-  echo "      The one without _old or -test in its name${example:+, for example}"
-  [[ -n "$example" ]] && echo "      ${example}"
-  echo "  [$(pip_k p "$key")] Pick for each route$(pip_cur_mark p "$key")"
-  echo "      Each route's maps are listed with their length and the time they were made."
-  echo "  [$(pip_k s "$key")] No map$(pip_cur_mark s "$key")"
-  echo "      Only the rear camera is put in the picture."
-  echo "  [q] Quit the script, render nothing"
-  pip_read_key "Map [$(pip_keys "$key" n p s q)]: " "$key"
+  printf '%sMap video: %d of %d route(s) have more than one map.%s\n' \
+    "$C_B" "$MAP_MULTI" "${#MAP_ROUTES[@]}" "$C_0"
+  [[ -n "$example" ]] && echo "  Newest map example: ${example}"
+  echo
+  pip_arrow_menu "$key" \
+    "n|The newest map of each route" \
+    "p|Pick for each route" \
+    "s|No map — rear camera only" \
+    "q|Quit"
+  REPLY="$(pip_choice "$REPLY")"
   case "$REPLY" in
     n) MAP_MODE=auto ;;
     p) MAP_MODE=pick ;;
@@ -2482,15 +2508,16 @@ pip_prompt_more_map() {
 
   echo
   case "$MAP_CORNER" in tl) key=1 ;; ll) key=3 ;; lr) key=4 ;; *) key=2 ;; esac
-  echo "Which corner should the map sit in? [1/2/3/4/q]"
+  echo "Which corner should the map sit in?"
   echo "  If the rear inset is in that corner, the map takes the other corner on the same edge."
-  echo "  It uses the same margins and border as the rear inset."
-  echo "  [1] Top left$([[ $key == 1 ]] && printf ' (current, default)')"
-  echo "  [2] Top right$([[ $key == 2 ]] && printf ' (current, default)')"
-  echo "  [3] Lower left$([[ $key == 3 ]] && printf ' (current, default)')"
-  echo "  [4] Lower right$([[ $key == 4 ]] && printf ' (current, default)')"
-  echo "  [q] Quit the script, render nothing more"
-  pip_read_key "Map corner [1/2/3/4/q] (Enter = ${key}): " "$key"
+  echo
+  pip_arrow_menu "$key" \
+    "1|Top left" \
+    "2|Top right" \
+    "3|Lower left" \
+    "4|Lower right" \
+    "q|Quit"
+  REPLY="$(pip_choice "$REPLY")"
   case "$REPLY" in
     1) MAP_CORNER=tl ;;
     2) MAP_CORNER=tr ;;
@@ -2538,16 +2565,17 @@ pip_prompt_test() {
     esac
   fi
   echo
-  echo "How much of each route should be rendered? [$(pip_keys "$key" a 1 2 5 c q)]"
+  echo "How much of each route should be rendered?"
   echo "  A part is saved under its own -test-… name, so a full render is kept."
-  echo "  [$(pip_k a "$key")] All of it, start to end$(pip_cur_mark a "$key")"
-  echo "  [1] 1 minute$(pip_cur_mark 1 "$key")"
-  echo "  [2] 2 minutes$(pip_cur_mark 2 "$key")"
-  echo "  [5] 5 minutes$(pip_cur_mark 5 "$key")"
-  echo "  [$(pip_k c "$key")] Custom length, typed next$(pip_cur_mark c "$key")"
-  echo "      For example 0:30, 10:00, 1:02:00, or 90 for seconds."
-  echo "  [q] Quit the script, render nothing more"
-  pip_read_key "Length [$(pip_keys "$key" a 1 2 5 c q)]: " "$key"
+  echo
+  pip_arrow_menu "$key" \
+    "a|All of it, start to end" \
+    "1|1 minute" \
+    "2|2 minutes" \
+    "5|5 minutes" \
+    "c|Custom length (typed next)" \
+    "q|Quit"
+  REPLY="$(pip_choice "$REPLY")"
   case "$REPLY" in
     a) LENGTH="" FROM=0 FROM_MODE=begin; pip_update_test; return 0 ;;
     1) LENGTH=60 ;;
@@ -2572,15 +2600,14 @@ pip_prompt_test() {
 
   case "$FROM_MODE" in end) key=e ;; middle) key=m ;; *) key=b ;; esac
   echo
-  echo "Where should that part be taken from? [$(pip_keys "$key" b e m q)]"
-  echo "  [$(pip_k b "$key")] Counted from the beginning$(pip_cur_mark b "$key")"
-  echo "      0:00 starts at the very start."
-  echo "  [$(pip_k e "$key")] Counted back from the end$(pip_cur_mark e "$key")"
-  echo "      0:00 means the last $(pip_clock "$LENGTH") of each route."
-  echo "  [$(pip_k m "$key")] The middle of each route$(pip_cur_mark m "$key")"
-  echo "      No offset is asked."
-  echo "  [q] Quit the script, render nothing more"
-  pip_read_key "From [$(pip_keys "$key" b e m q)]: " "$key"
+  echo "Where should that part be taken from?"
+  echo
+  pip_arrow_menu "$key" \
+    "b|Counted from the beginning" \
+    "e|Counted back from the end (last $(pip_clock "$LENGTH"))" \
+    "m|The middle of each route" \
+    "q|Quit"
+  REPLY="$(pip_choice "$REPLY")"
   case "$REPLY" in
     b) [[ "$FROM_MODE" != begin ]] && FROM=0; FROM_MODE=begin ;;
     e) [[ "$FROM_MODE" != end ]] && FROM=0; FROM_MODE=end ;;
@@ -2613,28 +2640,15 @@ pip_prompt_test() {
 pip_prompt_plan() {
   while true; do
     echo
-    printf '%sRender now? [Y/c/m/t/q]%s\n' "$C_B" "$C_0"
-    if (( TO_RENDER == 0 && EXISTING > 0 && ! REDO )); then
-      echo "  [Y] Go on (default): there are no new routes"
-    else
-      echo "  [Y] Render all ${TO_RENDER} route(s) marked to render above (default)"
-    fi
-    if (( EXISTING > 0 && ! REDO )); then
-      echo "      Then you are asked what to do with the ${EXISTING} already rendered."
-    else
-      echo "      One after another, without asking again."
-    fi
-    echo "  [c] Choose route by route"
-    echo "      Each route's plan is printed again, then you say yes or no to it."
-    (( EXISTING > 0 )) && echo "      Already rendered routes ask whether to skip or render them again."
-    echo "  [m] Change the layout"
-    echo "      Inset size, corner, margins, mirror, crop, border, caption, swap,"
-    echo "      black gap box, output width, map. The plan is printed again afterwards."
-    echo "  [t] Render only part of each route (for a test)"
-    echo "      Pick how long, and where it starts: from the beginning, from the end,"
-    echo "      or the middle. Now: $(pip_part_label)."
-    echo "  [q] Quit the script, render nothing"
-    pip_read_key "Render now? [Y/c/m/t/q]: " y
+    printf '%sRender now?%s\n' "$C_B" "$C_0"
+    echo
+    pip_arrow_menu y \
+      "y|Render (default) — ${TO_RENDER} route(s); part now: $(pip_part_label)" \
+      "c|Choose route by route" \
+      "m|Change the layout" \
+      "t|Render only part of each route (test)" \
+      "q|Quit"
+    REPLY="$(pip_choice "$REPLY")"
     case "$REPLY" in
       y)
         CHOOSE=0
@@ -2946,6 +2960,7 @@ pip_on_exit() {
 }
 
 pip_ctrl_c() {
+  pip_arrow_menu_restore_tty
   STOPPED=yes
   echo
   echo "$(pip_ts) Interrupted."
@@ -3302,17 +3317,14 @@ for f in "${ROUTES[@]}"; do
   if (( CHOOSE )); then
     pip_print_route "$_ri" "${#ROUTES[@]}" "$f"
     echo
-    printf '%sRender route %d of %d? [Y/n/a/q]%s  %s\n' "$C_B" "$_ri" "${#ROUTES[@]}" "$C_0" "$(basename -- "${ROUTE_OUT[$f]}")"
-    echo "  [Y] Yes, render this route now (default)"
-    echo "      Then the next route is shown and asked about."
-    echo "  [n] No, skip this route"
-    echo "      Nothing is written for it. The next route is shown and asked about."
-    echo "  [a] All: render this route and every remaining new one"
-    echo "      No more questions for new routes; each is rendered in turn."
-    echo "      A remaining route that already exists is still asked about."
-    echo "  [q] Quit: stop here and render nothing more"
-    echo "      Routes already rendered in this run are kept."
-    pip_read_key "Render route ${_ri} of ${#ROUTES[@]}? [Y/n/a/q]: " y
+    printf '%sRender route %d of %d?%s  %s\n' "$C_B" "$_ri" "${#ROUTES[@]}" "$C_0" "$(basename -- "${ROUTE_OUT[$f]}")"
+    echo
+    pip_arrow_menu y \
+      "y|Yes, render this route now (default)" \
+      "n|No, skip this route" \
+      "a|All — render this and every remaining new route" \
+      "q|Quit"
+    REPLY="$(pip_choice "$REPLY")"
     case "$REPLY" in
       y) ;;
       a) CHOOSE=0 EXIST_ASK=1 ;;

@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.160000 - multi-choice prompts use shared script_arrow_menu (Up/Down)
 # v. 20261020.200000 - when nothing new to write, skip "Write 0 tracks?" and ask only about existing .gpx
 # v. 20261012.150601 - the reading line says Reading file and leaves the file name off
 # v. 20261006.225133 - the .gpx gets the video's creation time and file time
@@ -87,6 +88,27 @@ gg_colors() {
     C_C=$'\e[36m'
     C_0=$'\e[0m'
   fi
+  if declare -F script_colors_init >/dev/null 2>&1; then
+    if [[ -n "$C_G" ]]; then SCRIPT_USE_COLORS=1; else SCRIPT_USE_COLORS=0; fi
+    script_colors_init
+  fi
+}
+
+gg_choice() {
+  local c="${1,,}"; c="${c//$'\r'/}"; c="${c//$'\n'/}"; printf '%s' "$c"
+}
+
+gg_arrow_menu_restore_tty() {
+  declare -F script_arrow_menu_restore_tty >/dev/null 2>&1 && script_arrow_menu_restore_tty
+}
+
+gg_arrow_menu() {
+  gg_colors
+  if declare -F script_arrow_menu >/dev/null 2>&1; then
+    script_arrow_menu "$@"; return $?
+  fi
+  echo "$(gg_ts) script_arrow_menu missing — update _script_header.sh." >&2
+  REPLY="$(gg_choice "${1:-}")"; return 1
 }
 
 gg_rule() {
@@ -300,7 +322,12 @@ gg_check_prereqs() {
   echo "  [Y] Yes, install with the command above, then continue (default)"
   echo "  [n] No, stop here"
   echo "  [q] Quit the script"
-  gg_read_key "Install them now? [Y/n/q]: " y
+  echo
+  gg_arrow_menu y \
+    "y|Yes, install and continue (default)" \
+    "n|No — stop here" \
+    "q|Quit"
+  REPLY="$(gg_choice "$REPLY")"
   case "$REPLY" in
     y) ;;
     *) echo "$(gg_ts) Nothing installed."; exit 1 ;;
@@ -543,7 +570,12 @@ gg_prompt_old() {
   echo "      For example ..._old-20261006_210000.gpx beside the new file."
   echo "  [$(gg_k d "$key")] Delete it$(gg_cur_mark d "$key")"
   echo "  [q] Quit the script, write nothing more"
-  gg_read_key "Old file [$(gg_keys "$key" k d q)]: " "$key"
+  echo
+  gg_arrow_menu "$key" \
+    "k|Keep it, renamed with the date and time" \
+    "d|Delete it" \
+    "q|Quit"
+  REPLY="$(gg_choice "$REPLY")"
   case "$REPLY" in
     k) OLD_MODE=keep ;;
     d) OLD_MODE=delete ;;
@@ -564,7 +596,12 @@ gg_prompt_existing() {
   echo "  [r] Write them again too"
   echo "      What happens to each old file is asked next."
   echo "  [q] Quit the script, write nothing"
-  gg_read_key "Already written [S/r/q]: " s
+  echo
+  gg_arrow_menu s \
+    "s|Skip them (default)" \
+    "r|Write them again too" \
+    "q|Quit"
+  REPLY="$(gg_choice "$REPLY")"
   case "$REPLY" in
     s) ;;
     r)
@@ -602,7 +639,12 @@ gg_prompt_plan() {
   (( EXISTING > 0 && ! REDO )) && echo "      After that you are asked about the ${EXISTING} .gpx file(s) that are already there."
   echo "  [n] No, write nothing (also leave existing .gpx files alone)"
   echo "  [q] Quit the script"
-  gg_read_key "Write the new tracks now? [Y/n/q]: " y
+  echo
+  gg_arrow_menu y \
+    "y|Write ${TO_WRITE} new track(s) (default)" \
+    "n|No — write nothing" \
+    "q|Quit"
+  REPLY="$(gg_choice "$REPLY")"
   case "$REPLY" in
     y)
       if (( REDO )); then
@@ -705,6 +747,7 @@ gg_on_exit() {
 }
 
 gg_ctrl_c() {
+  gg_arrow_menu_restore_tty
   STOPPED=yes
   echo
   echo "$(gg_ts) Interrupted."

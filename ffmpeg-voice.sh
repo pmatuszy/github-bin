@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
+# v. 20261116.160000 - startup and batch menus use shared script_arrow_menu (Up/Down)
 # v. 20261115.200000 - SUMMARY: Family-A chrome + Script/Version at top
 # v. 20261006.124500 - menus: only the default key is a capital letter, like the [Y/n/q] prompt lines
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
+# 2026.11.16 - v. 3.56 - Colors, mode, scope, transcription, batch choice, and server-down menus use shared script_arrow_menu.
 # 2026.10.06 - v. 3.55 - colors, mode, scope, transcription, batch, and server-down menus list the non-default keys in lower case ([n] No, [d] Dry-run, [c], [a], [f], [g], [q] Quit); help shows [f] and [g]
 # 2026.06.11 - v. 3.54 - sha512 entries: relative paths without ./ prefix (rename.sh compatible)
 # 2026.06.11 - v. 3.53 - existing pairs: require sha512 on disk; auto-backfill when only hashes missing
@@ -303,6 +305,32 @@ print_question() {
 
 print_choice_prompt() {
     printf '%b%s Choice %s%b' "$GREEN" "$(voice_ts)" "$1" "$RESET"
+}
+
+voice_choice() {
+    local c="${1,,}"
+    c="${c//$'\r'/}"
+    c="${c//$'\n'/}"
+    printf '%s' "$c"
+}
+
+voice_arrow_menu_restore_tty() {
+    if declare -F script_arrow_menu_restore_tty >/dev/null 2>&1; then
+        script_arrow_menu_restore_tty
+    fi
+}
+
+voice_arrow_menu() {
+    if declare -F script_colors_init >/dev/null 2>&1; then
+        script_colors_init
+    fi
+    if declare -F script_arrow_menu >/dev/null 2>&1; then
+        script_arrow_menu "$@"
+        return $?
+    fi
+    echo "$(voice_ts) script_arrow_menu missing — update _script_header.sh." >&2
+    REPLY="$(voice_choice "${1:-}")"
+    return 1
 }
 
 print_input_prompt() {
@@ -745,23 +773,20 @@ trap voice_finish_run EXIT
 # COLOR SELECTION
 # ============================================================
 echo
-echo "$(voice_ts) Use colors?"
-echo "  [Y] Yes (default)"
-echo "  [n] No"
-echo "  [q] Quit"
-echo -n "$(voice_ts) Choice [Y/n/q]: "
+print_question "Use colors?"
+echo
+SCRIPT_USE_COLORS=1
+if declare -F script_colors_init >/dev/null 2>&1; then script_colors_init; fi
+voice_arrow_menu y \
+    "y|Yes (default)" \
+    "n|No" \
+    "q|Quit"
 
 use_colors=yes
-input=""
-
-read -r -t 60 -n 1 input || true
-printf '\n'
-
-if [[ "$input" =~ [Qq] ]]; then
-    voice_quit
-elif [[ "$input" =~ [Nn] ]]; then
-    use_colors=no
-fi
+case "$(voice_choice "$REPLY")" in
+    q) voice_quit ;;
+    n) use_colors=no ;;
+esac
 
 if [[ "$use_colors" == "yes" ]]; then
     RED=$'\033[31m'
@@ -776,28 +801,27 @@ else
     YELLOW=''
     RESET=''
 fi
+if declare -F script_colors_init >/dev/null 2>&1; then
+    if [[ "$use_colors" == yes ]]; then SCRIPT_USE_COLORS=1; else SCRIPT_USE_COLORS=0; fi
+    script_colors_init
+fi
 
 # ============================================================
 # MODE SELECTION
 # ============================================================
 echo
 print_question "Select mode:"
-print_suggestion "  [R] Real processing (default)"
-print_suggestion "  [d] Dry-run"
-print_suggestion "  [q] Quit"
-print_choice_prompt "[R/d/q]: "
+echo
+voice_arrow_menu r \
+    "r|Real processing (default)" \
+    "d|Dry-run" \
+    "q|Quit"
 
 mode="real"
-input=""
-
-read -r -t 60 -n 1 input || true
-printf '\n'
-
-if [[ "$input" =~ [Qq] ]]; then
-    voice_quit
-elif [[ "$input" =~ [Dd] ]]; then
-    mode="dry-run"
-fi
+case "$(voice_choice "$REPLY")" in
+    q) voice_quit ;;
+    d) mode="dry-run" ;;
+esac
 
 echo -e "Mode selected: ${CYAN}$mode${RESET}"
 
@@ -809,22 +833,17 @@ elif [[ -n "$CLI_SCOPE" ]]; then
 else
     echo
     print_question "What should be processed?"
-    print_suggestion "  [S] Also subdirectories (default)"
-    print_suggestion "  [c] Current directory only"
-    print_suggestion "  [q] Quit"
-    print_choice_prompt "[S/c/q]: "
+    echo
+    voice_arrow_menu s \
+        "s|Also subdirectories (default)" \
+        "c|Current directory only" \
+        "q|Quit"
 
-    input=""
-    read -r -t 60 -n 1 input || true
-    printf '\n'
-
-    if [[ "$input" =~ [Qq] ]]; then
-        voice_quit
-    elif [[ "$input" =~ [Cc] ]]; then
-        process_scope="current"
-    else
-        process_scope="subdirs"
-    fi
+    case "$(voice_choice "$REPLY")" in
+        q) voice_quit ;;
+        c) process_scope="current" ;;
+        *) process_scope="subdirs" ;;
+    esac
     echo -e "Scope selected: ${CYAN}$process_scope${RESET}"
 fi
 
@@ -834,27 +853,19 @@ fi
 echo
 if [[ "$mode" == "real" ]]; then
     print_question "Enable transcription (ORG/OUTPUT x VAD/noVAD whisper servers)?"
-    print_suggestion "  [Y] Yes (default)"
-    print_suggestion "  [n] No"
-    print_suggestion "  [q] Quit"
-    print_choice_prompt "[Y/n/q]: "
 else
     print_question "Include transcription step in dry-run (ORG/OUTPUT x VAD/noVAD)?"
-    print_suggestion "  [Y] Yes (default)"
-    print_suggestion "  [n] No"
-    print_suggestion "  [q] Quit"
-    print_choice_prompt "[Y/n/q]: "
 fi
+echo
+voice_arrow_menu y \
+    "y|Yes (default)" \
+    "n|No" \
+    "q|Quit"
 
-input=""
-read -r -t 60 -n 1 input || true
-printf '\n'
-
-if [[ "$input" =~ [Qq] ]]; then
-    voice_quit
-elif [[ "$input" =~ [Nn] ]]; then
-    DO_TRANSCRIPTION=no
-fi
+case "$(voice_choice "$REPLY")" in
+    q) voice_quit ;;
+    n) DO_TRANSCRIPTION=no ;;
+esac
 
 echo -e "Transcription enabled: ${CYAN}$DO_TRANSCRIPTION${RESET}"
 
@@ -1064,33 +1075,31 @@ read_batch_choice() {
     BATCH_CHOICE_ACTION=""
 
     print_question "$prompt_line"
-    print_suggestion "  [Y] Yes (default)"
-    print_suggestion "  [n] No"
-    print_suggestion "  [a] Yes for all remaining in this batch"
-    print_suggestion "  [f] Finish batch now (process selected only; stop asking for rest of batch)"
-    print_suggestion "  [g] Process selected; skip all further prompts this run"
-    print_suggestion "  [q] Quit"
-    print_choice_prompt "[Y/n/a/f/g/q]: "
+    echo
+    voice_arrow_menu y \
+        "y|Yes (default)" \
+        "n|No" \
+        "a|Yes for all remaining in this batch" \
+        "f|Finish batch now (process selected only)" \
+        "g|Process selected; skip all further prompts this run" \
+        "q|Quit"
 
-    read -r -t 300 -n 1 input || true
-    printf '\n'
-
-    case "$input" in
-        q|Q)
+    case "$(voice_choice "$REPLY")" in
+        q)
             BATCH_CHOICE_ACTION=quit
             ;;
-        n|N)
+        n)
             BATCH_CHOICE_DECISION=no
             BATCH_CHOICE_ACTION=decided
             ;;
-        a|A)
+        a)
             BATCH_CHOICE_DECISION=yes
             BATCH_CHOICE_ACTION=accept_all
             ;;
-        f|F)
+        f)
             BATCH_CHOICE_ACTION=finish_batch
             ;;
-        g|G)
+        g)
             BATCH_CHOICE_ACTION=skip_all
             ;;
         *)
@@ -1362,18 +1371,18 @@ ensure_transcribe_endpoint_ready() {
         echo
         echo -e "${YELLOW}TRANSCRIPTION SERVER DOWN:${RESET} ${host}:${port} (${label})"
         print_transcribe_endpoint_down_reason "$host" "$port"
-        print_suggestion "  [W] Wait until the server is back (default)"
-        print_suggestion "  [c] Continue without transcription (skip)"
-        print_suggestion "  [q] Quit"
-        print_choice_prompt "[W/c/q]: "
-        read -r -t 300 -n 1 input || true
-        printf '\n'
+        print_question "Transcription server down — what now?"
+        echo
+        voice_arrow_menu w \
+            "w|Wait until the server is back (default)" \
+            "c|Continue without transcription" \
+            "q|Quit"
 
-        case "$input" in
-            q|Q)
+        case "$(voice_choice "$REPLY")" in
+            q)
                 voice_quit
                 ;;
-            c|C)
+            c)
                 echo -e "${YELLOW}TRANSCRIPTION SKIPPED:${RESET} ${host}:${port} is down — continuing without transcription."
                 return 1
                 ;;
@@ -3180,6 +3189,7 @@ record_change() {
 }
 
 cleanup_current_file() {
+    voice_arrow_menu_restore_tty
     local removed_msg=""
     local restored_msg=""
     local txt_removed_msg=""

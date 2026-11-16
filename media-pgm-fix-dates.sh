@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.160500 - Fix dates menu uses shared script_arrow_menu (Up/Down + Enter)
 # v. 20261116.144500 - Ctrl-C during decide/prompts also prints SUMMARY (not only during apply)
 # v. 20261116.143700 - ask Use colors?; green questions / prompts; highlight (default)
 # v. 20261115.142500 - Contour metadata: allow short clips; --force-contour bypasses duration gate
@@ -51,6 +52,8 @@
 # 2026.11.15 - v. 0.1.17 - process in batches: ask all decisions for a batch first, then write; batch size
 #   default = all when ≤50 files, else 50 (--batch-size / MFD_BATCH_SIZE); Ctrl-C during a write stops
 #   exiftool and removes that file's *_exiftool_tmp
+# 2026.11.16 - v. 0.1.19 - Fix dates per-file menu uses shared script_arrow_menu (Up/Down + Enter);
+#   Contour multi-line help stays above the menu; read_key fallback if header is old.
 # 2026.11.16 - v. 0.1.18 - Ctrl-C during decide/prompts prints SUMMARY (trap was only set while applying).
 # 2026.11.16 - v. 0.1.17 - Ask Use colors? at startup (default Yes); green question/prompt text;
 #   highlight "(default)" on menu lines (shared _script_header helpers).
@@ -339,6 +342,11 @@ mfd_progress_end() {
 MFD_SUMMARY_DONE=0
 
 mfd_ctrl_c() {
+  if declare -F mfd_arrow_menu_restore_tty >/dev/null 2>&1; then
+    mfd_arrow_menu_restore_tty
+  elif declare -F script_arrow_menu_restore_tty >/dev/null 2>&1; then
+    script_arrow_menu_restore_tty
+  fi
   echo
   mfd_progress_end
   echo "$(mfd_ts) Interrupted (Ctrl-C)."
@@ -470,6 +478,23 @@ mfd_read_key() {
   else
     REPLY="$answer"
   fi
+}
+
+mfd_arrow_menu_restore_tty() {
+  if declare -F script_arrow_menu_restore_tty >/dev/null 2>&1; then
+    script_arrow_menu_restore_tty
+  fi
+}
+
+# Prefer shared script_arrow_menu from _script_header.sh.
+mfd_arrow_menu() {
+  if declare -F script_arrow_menu >/dev/null 2>&1; then
+    script_arrow_menu "$@"
+    return $?
+  fi
+  echo "$(mfd_ts) script_arrow_menu missing — update _script_header.sh." >&2
+  REPLY="$(mfd_choice "${1:-}")"
+  return 1
 }
 
 mfd_choice() {
@@ -1471,6 +1496,7 @@ mfd_decide_file() {
     echo "  Decisions are queued; writes run after this batch's questions."
   fi
   echo
+  local -a menu_opts=() item mk mlabel label
   key_list=()
   for (( i = 0; i < n; i++ )); do
     note="${MFD_NOTES[i]}"
@@ -1491,39 +1517,61 @@ mfd_decide_file() {
         note="(${def_note})"
       fi
     fi
-    if declare -F script_echo_option >/dev/null 2>&1; then
-      script_echo_option "$(printf '  [%d] %-18s %-19s  %s' \
-        "$((i + 1))" "${MFD_LABELS[i]}" "$disp" "$note")"
-    else
-      printf '  [%d] %-18s %-19s  %s\n' \
-        "$((i + 1))" "${MFD_LABELS[i]}" "$disp" "$note"
+    label="${MFD_LABELS[i]}  ${disp}"
+    if [[ -n "$note" ]]; then
+      label+="  ${note}"
     fi
+    menu_opts+=("$((i + 1))|${label}")
     key_list+=("$((i + 1))")
   done
-  echo "  [$(mfd_k a "$MFD_DEFAULT_KEY")] Always oldest for the rest of this run"
+  menu_opts+=("a|Always oldest for the rest of this run")
   if [[ -n "${MFD_CONTOUR_START_E:-}" && -n "${MFD_CONTOUR_END_E:-}" ]]; then
-    echo "  [$(mfd_k c "$MFD_DEFAULT_KEY")] Always Contour normalize for the rest of this run"
     echo "      name→start (rename), filesystem→end, media→start."
     echo "      Applies to this file and later Contour files only; non-Contour still use oldest / prompts."
     echo "      Already normalized Contour files (name=start, FS=end, media=start) stay skipped."
+    menu_opts+=("c|Always Contour normalize for the rest of this run")
   fi
-  echo "  [$(mfd_k k "$MFD_DEFAULT_KEY")] Keep as written for the rest of this run"
-  echo "  [$(mfd_k b "$MFD_DEFAULT_KEY")] Begin apply now — write answers so far; ask remaining files later"
-  echo "  [$(mfd_k s "$MFD_DEFAULT_KEY")] Skip this file"
-  echo "  [$(mfd_k q "$MFD_DEFAULT_KEY")] Quit (abandon this batch's pending writes)"
+  menu_opts+=(
+    "k|Keep as written for the rest of this run"
+    "b|Begin apply now — write answers so far; ask remaining files later"
+    "s|Skip this file"
+    "q|Quit (abandon this batch's pending writes)"
+  )
   if [[ -n "${MFD_CONTOUR_START_E:-}" && -n "${MFD_CONTOUR_END_E:-}" ]]; then
     key_list+=(a c k b s q)
   else
     key_list+=(a k b s q)
   fi
   prompt_keys="$(mfd_keys "$MFD_DEFAULT_KEY" "${key_list[@]}")"
+  prompt_extra=""
   if [[ "$MFD_DEFAULT_KEY" =~ ^[0-9]+$ ]]; then
     i=$((MFD_DEFAULT_KEY - 1))
     prompt_extra=" (default ${MFD_DEFAULT_KEY} = ${MFD_LABELS[i]})"
   fi
 
+  if declare -F script_print_question >/dev/null 2>&1; then
+    script_print_question "Fix dates (question ${MFD_Q_BATCH_POS}/${MFD_Q_BATCH_TOTAL}):"
+  else
+    echo "Fix dates (question ${MFD_Q_BATCH_POS}/${MFD_Q_BATCH_TOTAL}):"
+  fi
+  echo
+
   while true; do
-    mfd_read_key "Fix dates [${prompt_keys}]${prompt_extra} (question ${MFD_Q_BATCH_POS}/${MFD_Q_BATCH_TOTAL}): " "$MFD_DEFAULT_KEY"
+    if declare -F script_arrow_menu >/dev/null 2>&1; then
+      mfd_arrow_menu "$MFD_DEFAULT_KEY" "${menu_opts[@]}"
+    else
+      for item in "${menu_opts[@]}"; do
+        mk="${item%%|*}"
+        mlabel="${item#*|}"
+        if declare -F script_echo_option >/dev/null 2>&1; then
+          script_echo_option "  [$(mfd_k "$mk" "$MFD_DEFAULT_KEY")] ${mlabel}"
+        else
+          printf '  [%s] %s\n' "$(mfd_k "$mk" "$MFD_DEFAULT_KEY")" "$mlabel"
+        fi
+      done
+      echo
+      mfd_read_key "Fix dates [${prompt_keys}]${prompt_extra} (question ${MFD_Q_BATCH_POS}/${MFD_Q_BATCH_TOTAL}): " "$MFD_DEFAULT_KEY"
+    fi
     choice="$(mfd_choice "$REPLY")"
     case "$choice" in
       q)

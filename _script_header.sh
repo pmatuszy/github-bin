@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.151500 - shared script_arrow_menu (Up/Down + Enter) for interactive prompts
 # v. 20261116.143700 - shared terminal colors: ask Use colors?, green questions, highlight (default)
 # v. 20261115.200000 - SUMMARY helpers: Script + Version identity; Family-A begin/end chrome
 # v. 20261021.210400 - Usage/help use script_live_basename from _script_self_update.sh
@@ -14,6 +15,8 @@
 # v. 20260716.173600 - print_version_banner uses CALLER_SCRIPT version fields
 # v. 20260716.163300 - versioning v. YYYYMMDD.HH24MISS; parse first # v. YYYYMMDD.HHMMSS line
 
+# 2026.11.16 - v. 1.69.151500 - Shared script_arrow_menu: Up/Down highlight, Enter select;
+#                        letter keys still work; used by AV interactive prompts.
 # 2026.11.16 - v. 1.68.143700 - Shared interactive colors: SCRIPT_USE_COLORS, script_ask_colors,
 #                        script_print_question, script_echo_option (green "(default)"), script_printf_prompt.
 #                        Scripts set SCRIPT_TS_FN to their timestamp helper and call script_ask_colors after the banner.
@@ -606,10 +609,246 @@ script_printf_prompt() {
   fi
 }
 
+
+#######################################################################################
+# Shared Up/Down arrow menu for interactive audio / media / video scripts.
+# Usage: script_arrow_menu DEFAULT_KEY "key|label" "key|label" ...
+# Sets REPLY to the chosen key (lowercase). Up/Down move; Enter accepts;
+# pressing a listed key accepts immediately. Digits 1/2 map to y/n when those
+# keys are options and 1/2 are not. Non-TTY: static list + one-key read.
+#######################################################################################
+SCRIPT_ARROW_STTY=""
+
+script_arrow_menu_restore_tty() {
+  printf '\033[?25h' 2>/dev/null || true
+  if [[ -n "${SCRIPT_ARROW_STTY:-}" ]]; then
+    stty "$SCRIPT_ARROW_STTY" 2>/dev/null || true
+    SCRIPT_ARROW_STTY=""
+  fi
+}
+
+script_arrow_choice() {
+  local c="${1,,}"
+  c="${c//$'\r'/}"
+  c="${c//$'\n'/}"
+  printf '%s' "$c"
+}
+
+script_arrow_key_disp() {
+  local key="$1" def="$2"
+  if [[ "$(script_arrow_choice "$key")" == "$(script_arrow_choice "$def")" ]]; then
+    printf '%s' "${key^^}"
+  else
+    printf '%s' "$key"
+  fi
+}
+
+script_arrow_def_mark() {
+  local key="$1" def="$2" label="${3:-}"
+  [[ "$(script_arrow_choice "$key")" == "$(script_arrow_choice "$def")" ]] || return 0
+  [[ "$label" == *'(default)'* || "$label" == *'(oldest - default)'* ]] && return 0
+  printf ' (default)'
+}
+
+script_arrow_flush_stdin() {
+  local discard drained=0
+  while (( drained < 256 )) && IFS= read -r -t 0.02 -n 1 discard; do
+    ((++drained)) || true
+  done
+}
+
+script_arrow_menu_has_key() {
+  local want="$1" k
+  shift
+  for k in "$@"; do
+    [[ "$(script_arrow_choice "$k")" == "$want" ]] && return 0
+  done
+  return 1
+}
+
+# $1 = default key (may be empty = no default; Enter still accepts highlight).
+# Remaining: "key|label" options.
+script_arrow_menu() {
+  local def_key="${1:-}"
+  shift
+  local -a keys=() labels=()
+  local item i n idx=0
+  local byte="" c2="" c3="" ch="" accepted=0
+  local rows=0 has_y=0 has_n=0 has_1=0 has_2=0
+  local key_disp mark line
+
+  for item in "$@"; do
+    keys+=("${item%%|*}")
+    labels+=("${item#*|}")
+  done
+  n=${#keys[@]}
+  (( n > 0 )) || {
+    REPLY="$(script_arrow_choice "$def_key")"
+    return 1
+  }
+
+  def_key="$(script_arrow_choice "$def_key")"
+  if [[ -n "$def_key" ]]; then
+    for (( i = 0; i < n; i++ )); do
+      if [[ "$(script_arrow_choice "${keys[i]}")" == "$def_key" ]]; then
+        idx=$i
+        break
+      fi
+    done
+  fi
+
+  for (( i = 0; i < n; i++ )); do
+    case "$(script_arrow_choice "${keys[i]}")" in
+      y) has_y=1 ;;
+      n) has_n=1 ;;
+      1) has_1=1 ;;
+      2) has_2=1 ;;
+    esac
+  done
+
+  if [[ ! -t 0 || ! -t 1 ]]; then
+    for (( i = 0; i < n; i++ )); do
+      key_disp="$(script_arrow_key_disp "${keys[i]}" "$def_key")"
+      mark="$(script_arrow_def_mark "${keys[i]}" "$def_key" "${labels[i]}")"
+      if declare -F script_echo_option >/dev/null 2>&1; then
+        script_echo_option "  [${key_disp}] ${labels[i]}${mark}"
+      else
+        printf '  [%s] %s%s\n' "$key_disp" "${labels[i]}" "$mark"
+      fi
+    done
+    echo
+    if [[ -n "$def_key" ]]; then
+      if declare -F script_printf_prompt >/dev/null 2>&1; then
+        script_printf_prompt "Choice: "
+      else
+        printf 'Choice: '
+      fi
+    else
+      printf 'Choice: '
+    fi
+    script_arrow_flush_stdin
+    byte=""
+    read -n 1 byte || byte=""
+    echo
+    ch="$(script_arrow_choice "$byte")"
+    if [[ -z "$ch" && -n "$def_key" ]]; then
+      REPLY="$def_key"
+      return 0
+    fi
+    if (( has_y && has_n && ! has_1 && ! has_2 )); then
+      case "$ch" in
+        1) ch=y ;;
+        2) ch=n ;;
+      esac
+    fi
+    REPLY="$ch"
+    return 0
+  fi
+
+  script_arrow_menu_draw() {
+    local j
+    for (( j = 0; j < n; j++ )); do
+      key_disp="$(script_arrow_key_disp "${keys[j]}" "$def_key")"
+      mark="$(script_arrow_def_mark "${keys[j]}" "$def_key" "${labels[j]}")"
+      if (( j == idx )); then
+        if (( SCRIPT_USE_COLORS )); then
+          printf ' %s>%s [%s] %s%s%s%s\n' \
+            "$SCRIPT_C_G" "$SCRIPT_C_0" "$key_disp" \
+            "$SCRIPT_C_G" "${labels[j]}" "$mark" "$SCRIPT_C_0"
+        else
+          printf ' > [%s] %s%s\n' "$key_disp" "${labels[j]}" "$mark"
+        fi
+      else
+        line="   [${key_disp}] ${labels[j]}${mark}"
+        if declare -F script_echo_option >/dev/null 2>&1; then
+          script_echo_option "$line"
+        else
+          printf '%s\n' "$line"
+        fi
+      fi
+    done
+    echo
+    if (( SCRIPT_USE_COLORS )); then
+      printf '  %sUp/Down move · Enter select · or press a listed key%s\n' \
+        "$SCRIPT_C_G" "$SCRIPT_C_0"
+    else
+      echo "  Up/Down move · Enter select · or press a listed key"
+    fi
+  }
+
+  SCRIPT_ARROW_STTY="$(stty -g 2>/dev/null || true)"
+  stty -echo -icanon min 1 time 0 2>/dev/null || true
+  printf '\033[?25l'
+  script_arrow_flush_stdin
+  script_arrow_menu_draw
+  rows=$((n + 2))
+
+  while (( ! accepted )); do
+    byte=""
+    IFS= read -r -n 1 byte || byte=""
+    if [[ "$byte" == $'\033' ]]; then
+      c2=""
+      c3=""
+      IFS= read -r -t 0.05 -n 1 c2 || c2=""
+      if [[ "$c2" == '[' || "$c2" == 'O' ]]; then
+        IFS= read -r -t 0.05 -n 1 c3 || c3=""
+        case "$c3" in
+          A)
+            if (( idx > 0 )); then
+              idx=$((idx - 1))
+            fi
+            printf '\033[%dA' "$rows"
+            script_arrow_menu_draw
+            continue
+            ;;
+          B)
+            if (( idx < n - 1 )); then
+              idx=$((idx + 1))
+            fi
+            printf '\033[%dA' "$rows"
+            script_arrow_menu_draw
+            continue
+            ;;
+        esac
+      fi
+      continue
+    fi
+
+    if [[ -z "$byte" || "$byte" == $'\n' || "$byte" == $'\r' ]]; then
+      REPLY="$(script_arrow_choice "${keys[idx]}")"
+      accepted=1
+      break
+    fi
+
+    ch="$(script_arrow_choice "$byte")"
+    if (( has_y && has_n && ! has_1 && ! has_2 )); then
+      case "$ch" in
+        1) ch=y ;;
+        2) ch=n ;;
+      esac
+    fi
+
+    for (( i = 0; i < n; i++ )); do
+      if [[ "$(script_arrow_choice "${keys[i]}")" == "$ch" ]]; then
+        idx=$i
+        REPLY="$ch"
+        accepted=1
+        printf '\033[%dA' "$rows"
+        script_arrow_menu_draw
+        break
+      fi
+    done
+  done
+
+  script_arrow_menu_restore_tty
+  echo
+  return 0
+}
+
 # Ask once. Default Yes. Pass 1 as $1 when -y / non-interactive should skip (colors off).
 # Returns via exit 0 on Quit. Sets SCRIPT_USE_COLORS and color codes.
 script_ask_colors() {
-  local do_yes="${1:-0}" answer="" discard drained=0
+  local do_yes="${1:-0}"
   SCRIPT_USE_COLORS=0
   script_colors_init
   if (( do_yes )) || (( ! script_is_run_interactively )); then
@@ -622,19 +861,14 @@ script_ask_colors() {
   script_colors_init
   echo
   script_print_question "Use colors in the terminal?"
-  script_echo_option "  [Y] / [1] Yes (default)"
-  echo "  [n] / [2] No"
-  echo "  [q] Quit"
-  script_printf_prompt "Use colors? [Y/n/q or 1/2]: "
-  while (( drained < 256 )) && IFS= read -r -t 0.02 -n 1 discard; do
-    ((++drained)) || true
-  done
-  read -n 1 answer || answer=""
   echo
-  answer="${answer,,}"
-  case "$answer" in
-    ""|y|1) SCRIPT_USE_COLORS=1 ;;
-    n|2) SCRIPT_USE_COLORS=0 ;;
+  script_arrow_menu y \
+    "y|Yes" \
+    "n|No" \
+    "q|Quit"
+  case "$(script_arrow_choice "$REPLY")" in
+    y|"") SCRIPT_USE_COLORS=1 ;;
+    n) SCRIPT_USE_COLORS=0 ;;
     q)
       echo "$(script_ts_now) Quit."
       return_code=0

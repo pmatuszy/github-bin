@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.160000 - multi-choice prompts use shared script_arrow_menu (Up/Down)
 # v. 20261116.143700 - highlight (default) via shared script_echo_option; sync SCRIPT_USE_COLORS
 # v. 20261116.135500 - yn prompts: [1]=Yes [2]=No alongside Y/N; colors menu shows 1/2
 # v. 20261115.200000 - SUMMARY: Family-A chrome + Script/Version at top
@@ -42,6 +43,7 @@
 # v. 20260801.144550 - normalize: map streams individually; skip MP4-unmappable timecode (tmcd) only
 # v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
+# 2026.11.16 - v. 0.5.64 - Scan scope, normalize mode, colors, batch choices, and backup conflict menus use shared script_arrow_menu (Up/Down + Enter).
 # 2026.11.16 - v. 0.5.63 - On Y/n prompts, [1]=Yes and [2]=No (same as Y/N); colors menu shows both.
 # 2026.11.11 - v. 0.5.62 - While loudnorm runs, show a live progress bar on a TTY (percent, elapsed/total, speed, ETA) via ffmpeg -progress, same idea as video-pgm-timelapse; GoPro two-pass labels pass 1/2 and 2/2; non-TTY stays quiet
 # 2026.10.16 - v. 0.5.61 - the file row follows the default track, so a PERFECT default hid a NORMAL second track from loudnorm. That second track is now offered on its own, and the default track is not filtered. Answering no to every file no longer aborts with an unbound variable
@@ -805,13 +807,15 @@ prompt_use_colors() {
     loudness_init_colors
   fi
   loudness_print_question 'Use colors in the terminal?'
-  script_echo_option '  [Y] / [1] Yes (default)'
-  echo '  [n] / [2] No'
-  echo '  [q] Quit'
-  loudness_read_yn_key 'Use colors? [Y/n/q or 1/2]: ' Y
-  case "${REPLY^^}" in
-    Q) loudness_quit_now ;;
-    N) LOUDNESS_USE_COLORS=no ;;
+  echo
+  loudness_init_colors
+  loudness_arrow_menu y \
+    "y|Yes (default)" \
+    "n|No" \
+    "q|Quit"
+  case "$(loudness_choice "$REPLY")" in
+    q) loudness_quit_now ;;
+    n) LOUDNESS_USE_COLORS=no ;;
     *) LOUDNESS_USE_COLORS=yes ;;
   esac
   if [[ "$LOUDNESS_USE_COLORS" == yes ]]; then
@@ -886,6 +890,7 @@ loudness_interrupt_restore_in_progress_file() {
 }
 
 loudness_on_interrupt() {
+  loudness_arrow_menu_restore_tty
   echo
   echo '** Trapped CTRL-C — cleaning up....'
   LOUDNESS_INTERRUPTED=yes
@@ -949,6 +954,30 @@ flush_stdin() {
   while (( drained < 256 )) && IFS= read -r -t 0.02 -n 1 discard; do
     (( ++drained ))
   done
+}
+
+loudness_choice() {
+  local c="${1,,}"
+  c="${c//$'\r'/}"
+  c="${c//$'\n'/}"
+  printf '%s' "$c"
+}
+
+loudness_arrow_menu_restore_tty() {
+  if declare -F script_arrow_menu_restore_tty >/dev/null 2>&1; then
+    script_arrow_menu_restore_tty
+  fi
+}
+
+loudness_arrow_menu() {
+  loudness_init_colors
+  if declare -F script_arrow_menu >/dev/null 2>&1; then
+    script_arrow_menu "$@"
+    return $?
+  fi
+  echo "$(loudness_ts) script_arrow_menu missing — update _script_header.sh." >&2
+  REPLY="$(loudness_choice "${1:-}")"
+  return 1
 }
 
 loudness_read_tty_byte() {
@@ -1606,13 +1635,15 @@ loudness_print_run_settings() {
 prompt_scan_scope() {
   (( PRINT_CLI_ONLY )) && loudness_print_cli_only_section 'Scan scope'
   loudness_print_question 'What should be scanned?'
-  script_echo_option '  [S] Also subdirectories (default)'
-  echo '  [c] Current directory only'
-  echo '  [q] Quit'
-  loudness_read_key 'Scan scope? [S/c/q]: ' S
-  case "${REPLY^^}" in
-    Q) loudness_quit_now ;;
-    C) LOUDNESS_SCAN_SCOPE=current ;;
+  echo
+  loudness_init_colors
+  loudness_arrow_menu s \
+    "s|Also subdirectories (default)" \
+    "c|Current directory only" \
+    "q|Quit"
+  case "$(loudness_choice "$REPLY")" in
+    q) loudness_quit_now ;;
+    c) LOUDNESS_SCAN_SCOPE=current ;;
     *) LOUDNESS_SCAN_SCOPE=subdirs ;;
   esac
   loudness_print_selected "$(loudness_scan_scope_label)"
@@ -3855,14 +3886,20 @@ resolve_backup_conflict() {
 
   if [[ ! -f "$file" ]]; then
     echo '    Only the backup remains — cannot normalize without the original file.'
-    loudness_read_yn_key 'Restore backup to original name and skip normalize? [Y/n/q]: ' Y
-    case "${REPLY^^}" in
-      Q)
+    loudness_print_question 'Restore backup to original name and skip normalize?'
+    echo
+    loudness_init_colors
+    loudness_arrow_menu y \
+      "y|Yes — restore backup; skip normalize (default)" \
+      "n|No — leave backup; skip normalize" \
+      "q|Quit"
+    case "$(loudness_choice "$REPLY")" in
+      q)
         loudness_print_selected 'quit'
         _result=quit
         return 0
         ;;
-      N)
+      n)
         loudness_print_selected 'no — leave backup; skip normalize'
         _result=skip
         return 0
@@ -3881,25 +3918,26 @@ resolve_backup_conflict() {
     esac
   fi
 
-  echo '  [y] Remove old backup, move current file aside, then normalize'
-  echo '      (the previous original in .original-backup.<ext> will be deleted)'
-  echo '  [k] Keep old backup; normalize current file in place'
-  echo '      (safe for re-normalizing; backup still holds the first original)'
-  script_echo_option '  [S] Skip this file (default)'
-  echo '  [q] Quit'
-  loudness_read_key "Backup conflict for ${file}? [y/k/S/q]: " S
-  case "${REPLY^^}" in
-    Q)
+  loudness_print_question "Backup conflict for ${file}?"
+  echo
+  loudness_init_colors
+  loudness_arrow_menu s \
+    "y|Remove old backup, move current file aside, then normalize (deletes previous .original-backup)" \
+    "k|Keep old backup; normalize current file in place" \
+    "s|Skip this file (default)" \
+    "q|Quit"
+  case "$(loudness_choice "$REPLY")" in
+    q)
       loudness_print_selected 'quit'
       _result=quit
       ;;
-    Y)
+    y)
       loudness_print_selected 'replace old backup and move current aside'
       if remove_old_backup_and_move_aside "$file" "$backup"; then
         _result=moved
       fi
       ;;
-    K)
+    k)
       loudness_print_selected 'keep old backup; normalize in place'
       _result=inplace
       ;;
@@ -5311,15 +5349,18 @@ prompt_normalize_mode() {
   else
     echo "No files available for normalization with selected classes."
   fi
-  echo "  [s] Standard loudnorm"
-  script_echo_option "  [Y] YouTube-style loudnorm (I=-16:TP=-1.0:LRA=11) (default)"
-  echo "  [n] Skip normalization"
-  echo "  [q] Quit"
-  loudness_read_key 'Normalize? [s/Y/n/q]: ' Y
-  case "${REPLY^^}" in
-    Q) loudness_quit_now ;;
-    S) NORMALIZE_MODE=standard ;;
-    N) NORMALIZE_MODE=none ;;
+  loudness_print_question 'Normalization mode?'
+  echo
+  loudness_init_colors
+  loudness_arrow_menu y \
+    "s|Standard loudnorm" \
+    "y|YouTube-style loudnorm (I=-16:TP=-1.0:LRA=11) (default)" \
+    "n|Skip normalization" \
+    "q|Quit"
+  case "$(loudness_choice "$REPLY")" in
+    q) loudness_quit_now ;;
+    s) NORMALIZE_MODE=standard ;;
+    n) NORMALIZE_MODE=none ;;
     *) NORMALIZE_MODE=youtube ;;
   esac
   case "$NORMALIZE_MODE" in
@@ -5410,52 +5451,54 @@ loudness_print_batch_prompt_summary() {
 
 loudness_read_normalize_batch_choice() {
   local file="$1" status="$2" max_db="$3" mean_db="${4:-}"
-  local default='N' max_disp mean_disp prompt
+  local default='n' max_disp mean_disp dir
 
   if ! loudness_normalize_prompt_default_no "$status"; then
-    default='Y'
+    default='y'
   fi
   max_disp="$(format_db_display_value "$max_db")"
   mean_disp="$(format_db_display_value "$mean_db")"
+  dir="$(dirname -- "$file")"
 
+  loudness_print_question "Normalize: ${file}?"
+  echo "  (${status}, max ${max_disp}, mean ${mean_disp})"
   if [[ "$status" == NO_PROCESS ]]; then
     echo "  NO_PROCESS (mean ${mean_disp} below ${LOUDNESS_MEAN_SKIP_DB} dB) — default [N] (CLI: --force with -y to include)."
   fi
-
-  if [[ "$default" == 'Y' ]]; then
-    script_echo_option '  [Y] Yes normalize (default)'
-    echo '  [n] No'
-    echo "  [d] Yes, and rest of directory ($(dirname -- "$file")/) without further prompts"
-    echo '  [a] Yes for all remaining in this batch'
-    echo '  [f] Finish batch now (normalize selected only; stop asking for rest of batch)'
-    echo '  [g] Normalize selected; skip all further prompts this run'
-    echo '  [q] Quit'
-    prompt="(${status}, max ${max_disp}, mean ${mean_disp}) Normalize: ${file}? [Y/n/d/a/f/g/q]: "
-    loudness_read_yn_key "$prompt" Y
+  echo
+  loudness_init_colors
+  if [[ "$default" == y ]]; then
+    loudness_arrow_menu y \
+      "y|Yes normalize (default)" \
+      "n|No" \
+      "d|Yes, and rest of directory (${dir}/) without further prompts" \
+      "a|Yes for all remaining in this batch" \
+      "f|Finish batch now (normalize selected only; stop asking for rest of batch)" \
+      "g|Normalize selected; skip all further prompts this run" \
+      "q|Quit"
   else
-    echo '  [y] Yes normalize'
-    script_echo_option '  [N] No (default)'
-    echo "  [d] Yes, and rest of directory ($(dirname -- "$file")/) without further prompts"
-    echo '  [a] Yes for all remaining in this batch'
-    echo '  [f] Finish batch now (normalize selected only; stop asking for rest of batch)'
-    echo '  [g] Normalize selected; skip all further prompts this run'
-    echo '  [q] Quit'
-    prompt="(${status}, max ${max_disp}, mean ${mean_disp}) Normalize: ${file}? [y/N/d/a/f/g/q]: "
-    loudness_read_yn_key "$prompt" N
+    loudness_arrow_menu n \
+      "y|Yes normalize" \
+      "n|No (default)" \
+      "d|Yes, and rest of directory (${dir}/) without further prompts" \
+      "a|Yes for all remaining in this batch" \
+      "f|Finish batch now (normalize selected only; stop asking for rest of batch)" \
+      "g|Normalize selected; skip all further prompts this run" \
+      "q|Quit"
   fi
 
   LOUDNESS_BATCH_CHOICE_DECISION=""
   LOUDNESS_BATCH_CHOICE_ACTION=""
-  case "${REPLY^^}" in
-    Q) LOUDNESS_BATCH_CHOICE_ACTION=quit ;;
-    Y) LOUDNESS_BATCH_CHOICE_DECISION='yes'; LOUDNESS_BATCH_CHOICE_ACTION=decided ;;
-    D) LOUDNESS_BATCH_CHOICE_DECISION='yes'; LOUDNESS_BATCH_CHOICE_ACTION=decided_dir ;;
-    A) LOUDNESS_BATCH_CHOICE_DECISION='yes'; LOUDNESS_BATCH_CHOICE_ACTION=accept_all ;;
-    F) LOUDNESS_BATCH_CHOICE_ACTION=finish_batch ;;
-    G) LOUDNESS_BATCH_CHOICE_ACTION=skip_all ;;
-    N) LOUDNESS_BATCH_CHOICE_DECISION='no'; LOUDNESS_BATCH_CHOICE_ACTION=decided ;;
+  case "$(loudness_choice "$REPLY")" in
+    q) LOUDNESS_BATCH_CHOICE_ACTION=quit ;;
+    y) LOUDNESS_BATCH_CHOICE_DECISION='yes'; LOUDNESS_BATCH_CHOICE_ACTION=decided ;;
+    d) LOUDNESS_BATCH_CHOICE_DECISION='yes'; LOUDNESS_BATCH_CHOICE_ACTION=decided_dir ;;
+    a) LOUDNESS_BATCH_CHOICE_DECISION='yes'; LOUDNESS_BATCH_CHOICE_ACTION=accept_all ;;
+    f) LOUDNESS_BATCH_CHOICE_ACTION=finish_batch ;;
+    g) LOUDNESS_BATCH_CHOICE_ACTION=skip_all ;;
+    n) LOUDNESS_BATCH_CHOICE_DECISION='no'; LOUDNESS_BATCH_CHOICE_ACTION=decided ;;
     *)
-      if [[ "$default" == 'Y' ]]; then
+      if [[ "$default" == y ]]; then
         LOUDNESS_BATCH_CHOICE_DECISION='yes'
       else
         LOUDNESS_BATCH_CHOICE_DECISION='no'

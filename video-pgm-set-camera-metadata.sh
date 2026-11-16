@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.160500 - camera profile + decide menus use shared script_arrow_menu
 # v. 20261116.144500 - Ctrl-C during decide/prompts also prints SUMMARY (not only during apply)
 # v. 20261116.143700 - ask Use colors?; green questions / prompts; highlight (default)
 # v. 20261115.115000 - drop Write i/n line; (i/n) already on exiftool bar
@@ -16,6 +17,8 @@
 # v. 20261115.091000 - Contour profile is Contour+2 only (drop ROAM/GPS generics)
 # v. 20261115.090000 - initial: set Make/Model/Comment camera profiles (Contour, GoPro, 70mai, custom)
 #
+# 2026.11.16 - v. 0.1.15 - Camera profile and per-file decide menus use shared script_arrow_menu;
+#   profile menu still has no default; read_key fallback if header is old.
 # 2026.11.16 - v. 0.1.14 - Ctrl-C during decide/prompts prints SUMMARY (trap was only set while applying).
 # 2026.11.16 - v. 0.1.13 - Ask Use colors? at startup (default Yes); green question/prompt text;
 #   highlight "(default)" on menu lines (shared _script_header helpers).
@@ -210,6 +213,23 @@ scm_read_key() {
   else
     REPLY="$answer"
   fi
+}
+
+scm_arrow_menu_restore_tty() {
+  if declare -F script_arrow_menu_restore_tty >/dev/null 2>&1; then
+    script_arrow_menu_restore_tty
+  fi
+}
+
+# Prefer shared script_arrow_menu from _script_header.sh.
+scm_arrow_menu() {
+  if declare -F script_arrow_menu >/dev/null 2>&1; then
+    script_arrow_menu "$@"
+    return $?
+  fi
+  echo "$(scm_ts) script_arrow_menu missing — update _script_header.sh." >&2
+  REPLY="$(scm_choice "${1:-}")"
+  return 1
 }
 
 scm_choice() {
@@ -525,6 +545,11 @@ scm_run_exiftool_progress() {
 SCM_SUMMARY_DONE=0
 
 scm_ctrl_c() {
+  if declare -F scm_arrow_menu_restore_tty >/dev/null 2>&1; then
+    scm_arrow_menu_restore_tty
+  elif declare -F script_arrow_menu_restore_tty >/dev/null 2>&1; then
+    script_arrow_menu_restore_tty
+  fi
   echo
   scm_progress_end
   echo "$(scm_ts) Interrupted (Ctrl-C)."
@@ -740,19 +765,38 @@ scm_choose_camera_profile() {
   fi
   echo
   echo "  Camera profile (written as Make / Model / Comment):"
-  echo
-  echo "  [1] Contour+2 Camera"
-  echo "  [2] GoPro"
-  echo "  [3] 70mai-A510"
-  echo "  [4] Custom Make / Model"
-  echo "  [q] Quit"
   echo "  (no default — choose explicitly)"
   echo
+  if declare -F script_print_question >/dev/null 2>&1; then
+    script_print_question "Choose camera profile:"
+  else
+    echo "Choose camera profile:"
+  fi
+  echo
   while true; do
-    scm_read_key "Camera [1/2/3/4/q] (no default): " ""
-    if [[ -z "${REPLY:-}" ]]; then
-      echo "$(scm_ts) Choose 1, 2, 3, 4, or q."
-      continue
+    if declare -F script_arrow_menu >/dev/null 2>&1; then
+      scm_arrow_menu "" \
+        "1|Contour+2 Camera" \
+        "2|GoPro" \
+        "3|70mai-A510" \
+        "4|Custom Make / Model" \
+        "q|Quit"
+      if [[ -z "${REPLY:-}" ]]; then
+        echo "$(scm_ts) Choose 1, 2, 3, 4, or q."
+        continue
+      fi
+    else
+      echo "  [1] Contour+2 Camera"
+      echo "  [2] GoPro"
+      echo "  [3] 70mai-A510"
+      echo "  [4] Custom Make / Model"
+      echo "  [q] Quit"
+      echo
+      scm_read_key "Camera [1/2/3/4/q] (no default): " ""
+      if [[ -z "${REPLY:-}" ]]; then
+        echo "$(scm_ts) Choose 1, 2, 3, 4, or q."
+        continue
+      fi
     fi
     choice="$(scm_choice "$REPLY")"
     case "$choice" in
@@ -863,36 +907,59 @@ scm_decide_file() {
 
   scm_print_tag_plan "$f"
   echo
+  local -a menu_opts=() item mk mlabel
   if (( has_existing )); then
     echo "  Tags are already filled but do not match ${SCM_CAMERA_LABEL}."
-    if declare -F script_echo_option >/dev/null 2>&1; then
-      script_echo_option "  [$(scm_k y "$def")] Overwrite with ${SCM_CAMERA_LABEL} (default)"
-    else
-      echo "  [$(scm_k y "$def")] Overwrite with ${SCM_CAMERA_LABEL} (default)"
-    fi
-    echo "  [$(scm_k m "$def")] Merge — fill only empty fields; keep non-empty Make/Model/Comment"
-    echo "  [$(scm_k k "$def")] Keep current tags on this file"
-    echo "  [$(scm_k a "$def")] Overwrite this and every later file that differs"
-    echo "  [$(scm_k K "$def")] Keep existing tags for the rest of this run (only tag fully empty files)"
-    echo "  [$(scm_k b "$def")] Begin apply now — write answers so far; ask remaining files later"
-    echo "  [$(scm_k n "$def")] Skip this file"
-    echo "  [$(scm_k q "$def")] Quit (abandon this batch's pending writes)"
+    menu_opts=(
+      "y|Overwrite with ${SCM_CAMERA_LABEL}"
+      "m|Merge — fill only empty fields; keep non-empty Make/Model/Comment"
+      "k|Keep current tags on this file"
+      "a|Overwrite this and every later file that differs"
+      "R|Keep existing tags for the rest of this run (only tag fully empty files)"
+      "b|Begin apply now — write answers so far; ask remaining files later"
+      "n|Skip this file"
+      "q|Quit (abandon this batch's pending writes)"
+    )
     keys="$(scm_keys "$def" y m k a K b n q)"
   else
-    if declare -F script_echo_option >/dev/null 2>&1; then
-      script_echo_option "  [$(scm_k y "$def")] Apply this file (default)"
-    else
-      echo "  [$(scm_k y "$def")] Apply this file (default)"
-    fi
-    echo "  [$(scm_k a "$def")] Apply this file and every later file"
-    echo "  [$(scm_k b "$def")] Begin apply now — write answers so far; ask remaining files later"
-    echo "  [$(scm_k n "$def")] Skip this file"
-    echo "  [$(scm_k q "$def")] Quit (abandon this batch's pending writes)"
+    menu_opts=(
+      "y|Apply this file"
+      "a|Apply this file and every later file"
+      "b|Begin apply now — write answers so far; ask remaining files later"
+      "n|Skip this file"
+      "q|Quit (abandon this batch's pending writes)"
+    )
     keys="$(scm_keys "$def" y a b n q)"
   fi
 
+  if declare -F script_print_question >/dev/null 2>&1; then
+    script_print_question "Set camera metadata (question ${SCM_Q_BATCH_POS}/${SCM_Q_BATCH_TOTAL}):"
+  else
+    echo "Set camera metadata (question ${SCM_Q_BATCH_POS}/${SCM_Q_BATCH_TOTAL}):"
+  fi
+  echo
+
   while true; do
-    scm_read_key "Set camera metadata [${keys}] (question ${SCM_Q_BATCH_POS}/${SCM_Q_BATCH_TOTAL}): " "$def"
+    if declare -F script_arrow_menu >/dev/null 2>&1; then
+      scm_arrow_menu "$def" "${menu_opts[@]}"
+    else
+      for item in "${menu_opts[@]}"; do
+        mk="${item%%|*}"
+        if [[ "$mk" == R ]]; then
+          mk_disp="$(scm_k K "$def")"
+        else
+          mk_disp="$(scm_k "$mk" "$def")"
+        fi
+        mlabel="${item#*|}"
+        if declare -F script_echo_option >/dev/null 2>&1; then
+          script_echo_option "  [${mk_disp}] ${mlabel}"
+        else
+          printf '  [%s] %s\n' "$mk_disp" "$mlabel"
+        fi
+      done
+      echo
+      scm_read_key "Set camera metadata [${keys}] (question ${SCM_Q_BATCH_POS}/${SCM_Q_BATCH_TOTAL}): " "$def"
+    fi
     case "$(scm_choice "$REPLY")" in
       b)
         if (( ${#PLAN_PATHS[@]} == 0 )); then
@@ -952,6 +1019,19 @@ scm_decide_file() {
         scm_print_selected "k = Keep current tags on this file"
         KEPT=$((KEPT + 1))
         echo "$(scm_ts) Kept existing tags: ${f##*/}"
+        return 0
+        ;;
+      r|R)
+        if (( ! has_existing )); then
+          echo "$(scm_ts) Unknown choice: ${REPLY}."
+          continue
+        fi
+        scm_print_selected "K = Keep existing tags for the rest of this run"
+        ALWAYS_KEEP_EXISTING=1
+        ALWAYS_APPLY=0
+        KEPT=$((KEPT + 1))
+        echo "$(scm_ts) Kept existing tags: ${f##*/}"
+        echo "$(scm_ts) Will keep existing tags for later files; only fully empty files get ${SCM_CAMERA_LABEL}."
         return 0
         ;;
       a)

@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.160000 - multi-choice prompts use shared script_arrow_menu (Up/Down)
 # v. 20261116.143700 - highlight (default) via shared script_echo_option; sync SCRIPT_USE_COLORS
 # v. 20261116.135500 - yn prompts: [1]=Yes [2]=No alongside Y/N; colors menu shows 1/2
 # v. 20261115.200000 - SUMMARY: Family-A chrome + Script/Version at top
@@ -7,6 +8,7 @@
 # v. 20261014.225419 - put clip-backup.mp4 back as clip.mp4 (the backup is the original)
 # v. 20261014.225225 - roll back audio-pgm-swap-audio.sh: delete each *-backup copy one by one (original stays)
 #
+# 2026.11.16 - v. 0.6 - Colors and per-file roll-back menus use shared script_arrow_menu.
 # 2026.11.16 - v. 0.5 - On Y/n prompts, [1]=Yes and [2]=No (same as Y/N); colors menu shows both.
 # 2026.10.15 - v. 0.4 - only Y is capital in the roll-back question
 # 2026.10.14 - v. 0.3 - dated copies clip-backup_YYYYMMDD-HHMMSS.ext are restored the same way
@@ -162,6 +164,30 @@ un_flush_stdin() {
   done
 }
 
+un_choice() {
+  local c="${1,,}"
+  c="${c//$'\r'/}"
+  c="${c//$'\n'/}"
+  printf '%s' "$c"
+}
+
+un_arrow_menu_restore_tty() {
+  if declare -F script_arrow_menu_restore_tty >/dev/null 2>&1; then
+    script_arrow_menu_restore_tty
+  fi
+}
+
+un_arrow_menu() {
+  un_colors
+  if declare -F script_arrow_menu >/dev/null 2>&1; then
+    script_arrow_menu "$@"
+    return $?
+  fi
+  echo "$(un_ts) script_arrow_menu missing — update _script_header.sh." >&2
+  REPLY="$(un_choice "${1:-}")"
+  return 1
+}
+
 un_read_key() {
   local prompt="$1" default_key="${2:-}" chosen="${3:-}" answer=""
   if (( ! script_is_run_interactively )); then
@@ -292,10 +318,13 @@ un_ask_colors() {
   un_colors
   echo
   un_print_question "Use colors in the terminal?"
-  script_echo_option "  [Y] / [1] Yes (default)"
-  echo "  [n] / [2] No"
-  echo "  [q] Quit"
-  un_read_key "Use colors? [Y/n/q or 1/2]: " y "Yes (use colors)"
+  echo
+  un_colors
+  un_arrow_menu y \
+    "y|Yes (default)" \
+    "n|No" \
+    "q|Quit"
+  REPLY="$(un_choice "$REPLY")"
   case "$REPLY" in
     y) USE_COLORS=yes ;;
     n) USE_COLORS=no ;;
@@ -326,11 +355,14 @@ un_process_one() {
   if (( ! DO_YES )) && (( ! APPLY_REST )) && (( script_is_run_interactively )); then
     echo
     un_print_question "Roll back this file?"
-    script_echo_option "  [Y] Yes (default) — put the original back as ${orig##*/}"
-    echo "  [s] Skip this file"
-    echo "  [a] Yes, and the same for every remaining file"
-    echo "  [q] Quit"
-    un_read_key "Roll back? [Y/s/a/q]: " y "Yes — restore the original"
+    echo
+    un_colors
+    un_arrow_menu y \
+      "y|Yes (default) — put the original back as ${orig##*/}" \
+      "s|Skip this file" \
+      "a|Yes, and the same for every remaining file" \
+      "q|Quit"
+    REPLY="$(un_choice "$REPLY")"
     case "$REPLY" in
       y) un_print_selected "yes (roll back)" ;;
       s)
@@ -416,6 +448,7 @@ un_on_exit() {
 }
 
 un_ctrl_c() {
+  un_arrow_menu_restore_tty
   STOPPED=yes
   echo
   echo "$(un_ts) Interrupted."
