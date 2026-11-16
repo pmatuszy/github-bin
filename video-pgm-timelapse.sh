@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.163200 - video pick menus: drop dialog; always use Up/Down arrow menus
 # v. 20261116.154800 - tighter arrow-menu spacing (fewer blank lines around prompts)
 # v. 20261116.154200 - Pick files uses Up/Down; fix progress ETA awk (missing printf arg)
 # v. 20261116.154000 - remaining interactive menus use Up/Down arrows
@@ -146,7 +147,7 @@
 show_help() {
   cat <<EOF
 Usage: $(script_live_basename) [-h|--help] [-v|--version] [--history]
-       [-y|--yes] [--redo] [--dialog|--no-dialog]
+       [-y|--yes] [--redo]
        [--speedup N] [--display normal|verbose]
        [--picture plain|steady|soft] [--blend-before N] [--blend-after N]
        [--fps 25|30|60] [--encoder auto|nvenc|x264|x265]
@@ -185,10 +186,9 @@ Options:
   -v, --version        Print script version and exit.
   --history            Print script changelog from the header and exit.
   -y, --yes            Do not ask. Encode with the options below.
-  --dialog             Prefer the dialog checklist for picking files when dialog
-                       is installed (default when a terminal and dialog are available).
-  --no-dialog          Never use dialog; use the plain key menu even if dialog
-                       is installed.
+  --dialog, --no-dialog
+                       Accepted for old scripts; ignored. File pick uses the
+                       shared Up/Down arrow menu.
   --speedup N          Integer speed, 2 to 240. Default 5.
                        --speed is the same option. The printed command uses --speedup.
                        Audio is always omitted.
@@ -220,27 +220,23 @@ Options:
                        replace, rename, or write a new name. -y skips the file
                        and prints which output is already there.
 
-An interactive run asks the questions, then prints the equivalent command and
-asks whether to encode. Answering no walks the questions again, and Enter
-keeps each current answer. The speed menu supports Up/Down arrows and Enter
-(letter keys still work). -y skips the questions and that confirmation.
-A pasted command with -y encodes without asking.
+An interactive run asks the questions (Up/Down arrow menus + Enter; letter keys
+still work), then prints the equivalent command and asks whether to encode.
+Answering no walks the questions again, and Enter keeps each current answer.
+-y skips the questions and that confirmation. A pasted command with -y encodes
+without asking.
 
 Environment:
   PGM_TIMELAPSE_SPEED     Same as --speedup.
   PGM_TIMELAPSE_ENCODER   Same as --encoder (auto, nvenc, x264, x265).
   PGM_TIMELAPSE_DISPLAY   normal (default) or verbose. verbose matches --verbose.
-  PGM_TIMELAPSE_DIALOG    1 or yes to prefer dialog; 0 or no for the plain menu
-                          (same as --dialog / --no-dialog). A command-line flag wins.
 
 Examples:
   $(script_live_basename) --speedup 10 trip_concat.mp4
   $(script_live_basename) -y --speedup 20 --picture steady --fps 30 trip_concat.mp4
   $(script_live_basename) -y --speedup 5 --gop source --keyframe-minutes 2 trip_concat.mp4
-  $(script_live_basename) --no-dialog
-      Ask which videos (plain keys), then the usual questions.
   $(script_live_basename)
-      Ask which videos (dialog when installed), then the questions (speed defaults to 5×).
+      Ask which videos (arrow menu), then the questions (speed defaults to 5×).
 EOF
 }
 
@@ -1986,23 +1982,6 @@ tl_file_kind() {
   fi
 }
 
-# 1 = prefer dialog, 0 = never, 2 = auto (dialog when installed and a tty).
-tl_dialog_wanted() {
-  case "${TL_DIALOG_MODE:-2}" in
-    0) return 1 ;;
-    1)
-      command -v dialog >/dev/null 2>&1 || return 1
-      [[ -t 0 && -t 1 ]] || return 1
-      return 0
-      ;;
-    *)
-      command -v dialog >/dev/null 2>&1 || return 1
-      [[ -t 0 && -t 1 ]] || return 1
-      return 0
-      ;;
-  esac
-}
-
 tl_filter_inputs_by_kind() {
   local want="$1" f kind
   local -a keep=()
@@ -2063,62 +2042,9 @@ tl_pick_files_plain() {
   TL_INPUTS=("${keep[@]}")
 }
 
-# Checklist with All / None buttons (help / extra) that redraw with every mark on or off.
-tl_pick_files_dialog() {
-  local i n h w list_h rc out tag state
-  local -a args=() keep=() marks=()
-  n=${#TL_INPUTS[@]}
-  (( n < 1 )) && return 0
-  for (( i = 0; i < n; i++ )); do
-    marks[i]=1
-  done
-  list_h=$n
-  (( list_h > 16 )) && list_h=16
-  h=$((list_h + 9))
-  w=78
-  while true; do
-    args=(--title "Timelapse videos"
-          --ok-label "Encode" --cancel-label "Quit"
-          --help-button --help-label "All"
-          --extra-button --extra-label "None"
-          --checklist "Space toggles a file. All / None reset every mark. Enter encodes the marked ones." \
-            "$h" "$w" "$list_h")
-    for (( i = 0; i < n; i++ )); do
-      if (( marks[i] )); then state=on; else state=off; fi
-      args+=("$((i + 1))" "${TL_INPUTS[i]##*/}" "$state")
-    done
-    out="$(dialog --ascii-lines --separate-output "${args[@]}" 3>&1 1>&2 2>&3)"
-    rc=$?
-    clear 2>/dev/null || true
-    case "$rc" in
-      0)
-        keep=()
-        while IFS= read -r tag; do
-          [[ -z "$tag" ]] && continue
-          if [[ "$tag" =~ ^[0-9]+$ ]] && (( tag >= 1 && tag <= n )); then
-            keep+=("${TL_INPUTS[tag - 1]}")
-          fi
-        done <<< "$out"
-        TL_INPUTS=("${keep[@]}")
-        return 0
-        ;;
-      2)
-        # Help → All
-        for (( i = 0; i < n; i++ )); do marks[i]=1; done
-        ;;
-      3)
-        # Extra → None
-        for (( i = 0; i < n; i++ )); do marks[i]=0; done
-        ;;
-      *)
-        tl_quit_script
-        ;;
-    esac
-  done
-}
-
 tl_prompt_input_files() {
   local n front=0 back=0 map=0 other=0 f kind choice def
+  local -a arrow_opts=()
   n=${#TL_INPUTS[@]}
   (( n <= 1 )) && return 0
   for f in "${TL_INPUTS[@]}"; do
@@ -2137,85 +2063,49 @@ tl_prompt_input_files() {
   (( map > 0 )) && echo "  Map:      ${map}"
   (( other > 0 )) && echo "  Other:    ${other}"
 
-  if tl_dialog_wanted; then
-    local -a items=()
-    local list_h h tag rc
-    items+=(a "All (${n})")
-    (( front > 0 )) && items+=(f "FrontCam only (${front})")
-    (( back > 0 )) && items+=(b "BackCam only (${back})")
-    (( map > 0 )) && items+=(m "Map only (${map})")
-    (( other > 0 )) && items+=(o "Other only (${other})")
-    items+=(p "Pick files...")
-    list_h=$((${#items[@]} / 2))
-    h=$((list_h + 7))
-    tag="$(dialog --ascii-lines --title "Timelapse videos" --ok-label "OK" --cancel-label "Quit" \
-      --default-item a --menu "Which videos to encode?" "$h" 72 "$list_h" "${items[@]}" \
-      3>&1 1>&2 2>&3)"
-    rc=$?
-    clear 2>/dev/null || true
-    if (( rc != 0 )); then
-      tl_quit_script
-    fi
-    case "$tag" in
-      a|'') ;;
-      f) tl_filter_inputs_by_kind front ;;
-      b) tl_filter_inputs_by_kind back ;;
-      m) tl_filter_inputs_by_kind map ;;
-      o) tl_filter_inputs_by_kind other ;;
-      p) tl_pick_files_dialog ;;
-      *)
-        echo "$(tl_ts) Unknown dialog choice: ${tag}."
-        ;;
-    esac
-  else
-    if (( ${TL_DIALOG_MODE:-2} == 1 )) && ! command -v dialog >/dev/null 2>&1; then
-      echo "$(tl_ts) dialog is not installed; using the plain menu."
-    fi
-    local -a key_list=(a)
-    def=a
-    local -a arrow_opts=()
-    arrow_opts+=("a|All (${n})")
-    if (( front > 0 )); then
-      arrow_opts+=("f|FrontCam only (${front})")
-    fi
-    if (( back > 0 )); then
-      arrow_opts+=("b|BackCam only (${back})")
-    fi
-    if (( map > 0 )); then
-      arrow_opts+=("m|Map only (${map})")
-    fi
-    if (( other > 0 )); then
-      arrow_opts+=("o|Other only (${other})")
-    fi
-    arrow_opts+=("p|Pick files...")
-    arrow_opts+=("q|Quit")
-    tl_arrow_menu "$def" "${arrow_opts[@]}"
-    choice="$(tl_choice "$REPLY")"
-    case "$choice" in
-      a|'') ;;
-      f)
-        (( front > 0 )) || { echo "$(tl_ts) No FrontCam videos."; return 1; }
-        tl_filter_inputs_by_kind front
-        ;;
-      b)
-        (( back > 0 )) || { echo "$(tl_ts) No BackCam videos."; return 1; }
-        tl_filter_inputs_by_kind back
-        ;;
-      m)
-        (( map > 0 )) || { echo "$(tl_ts) No Map videos."; return 1; }
-        tl_filter_inputs_by_kind map
-        ;;
-      o)
-        (( other > 0 )) || { echo "$(tl_ts) No other videos."; return 1; }
-        tl_filter_inputs_by_kind other
-        ;;
-      p) tl_pick_files_plain ;;
-      q) tl_quit_script ;;
-      *)
-        echo "$(tl_ts) Unknown choice: ${REPLY}. Encoding all ${n}."
-        ;;
-    esac
+  def=a
+  arrow_opts+=("a|All (${n})")
+  if (( front > 0 )); then
+    arrow_opts+=("f|FrontCam only (${front})")
   fi
+  if (( back > 0 )); then
+    arrow_opts+=("b|BackCam only (${back})")
+  fi
+  if (( map > 0 )); then
+    arrow_opts+=("m|Map only (${map})")
+  fi
+  if (( other > 0 )); then
+    arrow_opts+=("o|Other only (${other})")
+  fi
+  arrow_opts+=("p|Pick files...")
+  arrow_opts+=("q|Quit")
+  echo "Which videos to encode?"
+  tl_arrow_menu "$def" "${arrow_opts[@]}"
+  choice="$(tl_choice "$REPLY")"
+  case "$choice" in
+    a|'') ;;
+    f)
+      (( front > 0 )) || { echo "$(tl_ts) No FrontCam videos."; return 1; }
+      tl_filter_inputs_by_kind front
+      ;;
+    b)
+      (( back > 0 )) || { echo "$(tl_ts) No BackCam videos."; return 1; }
+      tl_filter_inputs_by_kind back
+      ;;
+    m)
+      (( map > 0 )) || { echo "$(tl_ts) No Map videos."; return 1; }
+      tl_filter_inputs_by_kind map
+      ;;
+    o)
+      (( other > 0 )) || { echo "$(tl_ts) No other videos."; return 1; }
+      tl_filter_inputs_by_kind other
+      ;;
+    p) tl_pick_files_plain ;;
+    q) tl_quit_script ;;
+    *)
+      echo "$(tl_ts) Unknown choice: ${REPLY}. Encoding all ${n}."
+      ;;
+  esac
 
   if (( ${#TL_INPUTS[@]} == 0 )); then
     echo "$(tl_ts) No videos selected."
@@ -2366,12 +2256,6 @@ tl_equivalent_command() {
   fi
   if (( REDO )); then
     cmd+=(--redo)
-  fi
-  if (( ${TL_DIALOG_FROM_CLI:-0} )); then
-    case "${TL_DIALOG_MODE:-2}" in
-      0) cmd+=(--no-dialog) ;;
-      1) cmd+=(--dialog) ;;
-    esac
   fi
   cmd+=(--)
   for f in "${TL_INPUTS[@]}"; do
@@ -3655,17 +3539,9 @@ fi
 TL_DISPLAY="${PGM_TIMELAPSE_DISPLAY:-}"
 TL_DISPLAY_FROM_CLI=0
 SPEED_FROM_CLI=0
-# 0 = never dialog, 1 = prefer dialog, 2 = auto when dialog + tty.
-TL_DIALOG_MODE=2
+# --dialog / --no-dialog kept as accepted no-ops for old CLI / env.
+TL_DIALOG_MODE=0
 TL_DIALOG_FROM_CLI=0
-case "${PGM_TIMELAPSE_DIALOG:-}" in
-  0|no|NO|false|FALSE|off|OFF)
-    TL_DIALOG_MODE=0
-    ;;
-  1|yes|YES|true|TRUE|on|ON)
-    TL_DIALOG_MODE=1
-    ;;
-esac
 TL_INPUTS=()
 TL_ASK_WHICH_FILES=0
 TL_PARTIAL=""
@@ -3744,13 +3620,8 @@ while [[ $# -gt 0 ]]; do
       REDO=1
       shift
       ;;
-    --dialog)
-      TL_DIALOG_MODE=1
-      TL_DIALOG_FROM_CLI=1
-      shift
-      ;;
-    --no-dialog)
-      TL_DIALOG_MODE=0
+    --dialog|--no-dialog)
+      # Deprecated: file pick always uses the Up/Down arrow menu.
       TL_DIALOG_FROM_CLI=1
       shift
       ;;
