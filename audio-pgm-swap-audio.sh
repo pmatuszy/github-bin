@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.135500 - yn prompts: [1]=Yes [2]=No alongside Y/N; colors menu shows 1/2
 # v. 20261115.200000 - SUMMARY: Family-A chrome + Script/Version at top
 # v. 20261016.084500 - --default N marks that audio track as the one players use, without reordering
 # v. 20261016.081400 - after a swap, GoPro telemetry and timecode stay in their original order
@@ -19,6 +20,7 @@
 # v. 20261014.220133 - ask to keep the original (default yes); print a facts table before and after each swap
 # v. 20261014.213909 - swap audio tracks in a video; every other stream stays, in the same order
 #
+# 2026.11.16 - v. 0.19 - On Y/n prompts, [1]=Yes and [2]=No (same as Y/N); colors/keep-copy menus show both.
 # 2026.10.16 - v. 0.18 - --default N keeps the audio order and marks audio track N as the default. Picture, telemetry and the other streams stay in their original order
 # 2026.10.16 - v. 0.17 - GoPro gpmd/MET is copied in place; tmcd cannot be stream-copied, so it is rebuilt and moved back beside telemetry in the original order
 # 2026.10.15 - v. 0.16 - the move/write status is several short lines, not one long line
@@ -413,7 +415,15 @@ sa_read_key() {
   else
     echo
   fi
-  REPLY="${answer:-$default_key}"
+  answer="${answer:-$default_key}"
+  # Digit shortcuts only on Y/n-style prompts (not O/t, Y/o/s, Y/c/k, …).
+  if [[ "$prompt" == *[Yy]/[Nn]* || "$prompt" == *[Nn]/[Yy]* ]]; then
+    case "$answer" in
+      1) answer=y ;;
+      2) answer=n ;;
+    esac
+  fi
+  REPLY="$answer"
 }
 
 sa_quit() {
@@ -1943,10 +1953,10 @@ sa_ask_colors() {
   sa_colors
   echo
   sa_print_question "Use colors in the terminal?"
-  echo "  [Y] Yes (default)"
-  echo "  [n] No"
+  echo "  [Y] / [1] Yes (default)"
+  echo "  [n] / [2] No"
   echo "  [q] Quit"
-  sa_read_key "Use colors? [Y/n/q]: " y "Yes (use colors)"
+  sa_read_key "Use colors? [Y/n/q or 1/2]: " y "Yes (use colors)"
   case "$REPLY" in
     y) USE_COLORS=yes ;;
     n) USE_COLORS=no ;;
@@ -1968,11 +1978,11 @@ sa_ask_keep_copy() {
   fi
   echo
   sa_print_question "Keep a copy of each original file?"
-  echo "  [Y] Yes (default) — original becomes clip-backup.mp4; swapped file keeps the original name"
+  echo "  [Y] / [1] Yes (default) — original becomes clip-backup.mp4; swapped file keeps the original name"
   echo "      If clip-backup.mp4 is already there, a dated copy is added and that file is left as it is"
-  echo "  [n] No — replace the original with the swapped file"
+  echo "  [n] / [2] No — replace the original with the swapped file"
   echo "  [q] Quit"
-  sa_read_key "Keep a copy of the original? [Y/n/q]: " y "Yes — save original as clip-backup.mp4"
+  sa_read_key "Keep a copy of the original? [Y/n/q or 1/2]: " y "Yes — save original as clip-backup.mp4"
   case "$REPLY" in
     y)
       KEEP_ORIGINAL=1
@@ -2034,10 +2044,10 @@ sa_ask_subtitles() {
   fi
   echo
   sa_print_question "Also swap subtitle tracks to the same languages as the audio?"
-  echo "  [Y] Yes (default) — Italian audio with Italian subtitles, and so on"
-  echo "  [n] No — leave subtitle order as it is"
+  echo "  [Y] / [1] Yes (default) — Italian audio with Italian subtitles, and so on"
+  echo "  [n] / [2] No — leave subtitle order as it is"
   echo "  [q] Quit"
-  sa_read_key "Swap matching subtitles? [Y/n/q]: " y "Yes — same language order as audio"
+  sa_read_key "Swap matching subtitles? [Y/n/q or 1/2]: " y "Yes — same language order as audio"
   case "$REPLY" in
     y)
       SWAP_SUBS=1

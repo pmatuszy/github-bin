@@ -1,10 +1,12 @@
 #!/bin/bash
+# v. 20261116.135500 - yn prompts: [1]=Yes [2]=No alongside Y/N; colors menu shows 1/2
 # v. 20261115.200000 - SUMMARY: Family-A chrome + Script/Version at top
 # v. 20261015.184100 - only the default key is a capital in the roll-back question
 # v. 20261014.225831 - also restore clip-backup_YYYYMMDD-HHMMSS.ext copies
 # v. 20261014.225419 - put clip-backup.mp4 back as clip.mp4 (the backup is the original)
 # v. 20261014.225225 - roll back audio-pgm-swap-audio.sh: delete each *-backup copy one by one (original stays)
 #
+# 2026.11.16 - v. 0.5 - On Y/n prompts, [1]=Yes and [2]=No (same as Y/N); colors menu shows both.
 # 2026.10.15 - v. 0.4 - only Y is capital in the roll-back question
 # 2026.10.14 - v. 0.3 - dated copies clip-backup_YYYYMMDD-HHMMSS.ext are restored the same way
 # 2026.10.14 - v. 0.2 - restore the original from stem-backup.ext over stem.ext, one file at a time
@@ -170,7 +172,14 @@ un_read_key() {
   else
     echo
   fi
-  REPLY="${answer:-$default_key}"
+  answer="${answer:-$default_key}"
+  if [[ "$prompt" == *[Yy]/[Nn]* || "$prompt" == *[Nn]/[Yy]* ]]; then
+    case "$answer" in
+      1) answer=y ;;
+      2) answer=n ;;
+    esac
+  fi
+  REPLY="$answer"
 }
 
 un_quit() {
@@ -274,10 +283,10 @@ un_ask_colors() {
   un_colors
   echo
   un_print_question "Use colors in the terminal?"
-  echo "  [Y] Yes (default)"
-  echo "  [n] No"
+  echo "  [Y] / [1] Yes (default)"
+  echo "  [n] / [2] No"
   echo "  [q] Quit"
-  un_read_key "Use colors? [Y/n/q]: " y "Yes (use colors)"
+  un_read_key "Use colors? [Y/n/q or 1/2]: " y "Yes (use colors)"
   case "$REPLY" in
     y) USE_COLORS=yes ;;
     n) USE_COLORS=no ;;

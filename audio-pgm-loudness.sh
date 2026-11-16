@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261116.135500 - yn prompts: [1]=Yes [2]=No alongside Y/N; colors menu shows 1/2
 # v. 20261115.200000 - SUMMARY: Family-A chrome + Script/Version at top
 # v. 20261111.210000 - normalize: live progress bar (ffmpeg -progress) like video-pgm-timelapse
 # v. 20261016.090000 - a non-default NORMAL or TOO QUIET track is offered for loudnorm; the perfect default stays
@@ -40,6 +41,7 @@
 # v. 20260801.144550 - normalize: map streams individually; skip MP4-unmappable timecode (tmcd) only
 # v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
+# 2026.11.16 - v. 0.5.63 - On Y/n prompts, [1]=Yes and [2]=No (same as Y/N); colors menu shows both.
 # 2026.11.11 - v. 0.5.62 - While loudnorm runs, show a live progress bar on a TTY (percent, elapsed/total, speed, ETA) via ffmpeg -progress, same idea as video-pgm-timelapse; GoPro two-pass labels pass 1/2 and 2/2; non-TTY stays quiet
 # 2026.10.16 - v. 0.5.61 - the file row follows the default track, so a PERFECT default hid a NORMAL second track from loudnorm. That second track is now offered on its own, and the default track is not filtered. Answering no to every file no longer aborts with an unbound variable
 # 2026.10.16 - v. 0.5.60 - when the default audio track is empty or very quiet and another track is normal or loud, suggest audio-pgm-swap-audio.sh --default N (order unchanged, other streams stay)
@@ -794,10 +796,10 @@ prompt_use_colors() {
     loudness_init_colors
   fi
   loudness_print_question 'Use colors in the terminal?'
-  echo '  [Y] Yes (default)'
-  echo '  [n] No'
+  echo '  [Y] / [1] Yes (default)'
+  echo '  [n] / [2] No'
   echo '  [q] Quit'
-  loudness_read_yn_key 'Use colors? [Y/n/q]: ' Y
+  loudness_read_yn_key 'Use colors? [Y/n/q or 1/2]: ' Y
   case "${REPLY^^}" in
     Q) loudness_quit_now ;;
     N) LOUDNESS_USE_COLORS=no ;;
@@ -1047,7 +1049,11 @@ loudness_read_yn_key() {
   if [[ -z "$answer" ]]; then
     REPLY="$default"
   else
-    REPLY="$answer"
+    case "${answer}" in
+      1) REPLY=Y ;;
+      2) REPLY=N ;;
+      *) REPLY="$answer" ;;
+    esac
   fi
 }
 
