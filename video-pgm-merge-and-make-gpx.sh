@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261117.073100 - Contour link parse also for suspect chains / gap labels
 # v. 20261117.073000 - force/Contour merge: extend concat_parts range (don't reuse input name)
 # v. 20261116.225500 - Contour suspect defaults to Preview joins; delete confirm defaults Yes
 # v. 20261116.224800 - no blank line between question/prompt and arrow menu
@@ -2698,8 +2699,8 @@ pgm_format_gap_to_next_note() {
   else
     signed="${delta} s"
   fi
-  if contour_basename_parse "${prev_f##*/}" 2>/dev/null \
-    && contour_basename_parse "${next_f##*/}" 2>/dev/null; then
+  if contour_link_basename_parse "${prev_f##*/}" 2>/dev/null \
+    && contour_link_basename_parse "${next_f##*/}" 2>/dev/null; then
     local tol max_stop suspect_max
     tol="${PGM_CONTOUR_TIME_TOLERANCE_SEC:-30}"
     max_stop="${PGM_CONTOUR_TIME_MAX_STOP_SEC:-12}"
@@ -5924,7 +5925,7 @@ build_contour_suspect_groups() {
         pgm_progress_update "Contour suspect" "$((i + 1))" "$n" "$f"
         last_prog=$i
       fi
-      contour_basename_parse "$base" || break
+      contour_link_basename_parse "$base" || break
       if ! contour_chapter_timestamps_within_suspect_ceiling "${run[-1]}" "$f"; then
         break
       fi
