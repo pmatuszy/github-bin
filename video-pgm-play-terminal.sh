@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261117.084800 - --silent: default PIPEWIRE_DEBUG=0 (no client-rt.conf spam)
 # v. 20261116.124500 - --silent skips run-settings / command dump (quieter merge previews)
 # v. 20260930.221200 - drop --no_startup_delay; this script is interactive
 # v. 20260916.133341 - print === Run settings === before playback; Equivalent CLI pins detected size
@@ -7,6 +8,8 @@
 # v. 20260725.151453 - ask before apt-installing missing packages; default N, 300s timeout
 # v. 20260718.180600 - restore terminal cursor/screen after mpv tct playback
 
+# 2026.11.17 - v. 0.6.8 - --silent: if PIPEWIRE_DEBUG is unset, set PIPEWIRE_DEBUG=0 so libpipewire
+#   does not print client-rt.conf / pw.conf lines over the tct stitch (merge join previews).
 # 2026.11.16 - v. 0.6.7 - --silent also skips === Run settings === and the mpv command dump so
 #   short merge/join previews stay quiet (mpv --no-terminal already suppressed status lines)
 # 2026.09.30 - v. 0.6.6 - drop --no_startup_delay; this script is interactive
@@ -643,6 +646,11 @@ mpv_version_line="$("$MPV_BIN" --version 2>/dev/null | head -n1)"
 declare -a MPV_ARGS=( --vo=tct )
 if (( PLAY_SILENT )); then
   MPV_ARGS+=( --no-terminal --profile=sw-fast )
+  # libpipewire logs missing/deprecated client-rt.conf to stderr; keep stitch previews clean.
+  # Leave an explicit PIPEWIRE_DEBUG from the caller alone.
+  if [[ -z "${PIPEWIRE_DEBUG+x}" ]]; then
+    export PIPEWIRE_DEBUG=0
+  fi
 fi
 if [[ -n "$TCT_WIDTH" ]]; then
   MPV_ARGS+=( --vo-tct-width="$TCT_WIDTH" )
