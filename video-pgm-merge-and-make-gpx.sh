@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261117.091300 - join/seam preview: do not call env (PGM env function broke play)
 # v. 20261117.084500 - join/seam preview: no merge figlet/banner (SCRIPT_HEADER_QUIET)
 # v. 20261117.083000 - group merge default: Preview joins (then Merge after a preview)
 # v. 20261117.082000 - fix CreateDate batch: literal tab in exiftool -p ( ${tab} was "-")
@@ -127,6 +128,9 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -
 
+# 2026.11.17 - v. 0.15.135 - Join/seam preview must not call `env` — interactive shells often
+#   define a PGM `env` function ("env is a function"), so the player never started and the stitch
+#   looked empty. Use a subshell + unset/export instead.
 # 2026.11.17 - v. 0.15.134 - Join/seam preview no longer reprints the merge figlet + version box.
 #   play-terminal is started with SCRIPT_HEADER_QUIET=1 and without inherited SCRIPT_SELF_* seal
 #   env (those made the child banner show video-pgm-merge-and-make-gpx.sh).
@@ -2138,12 +2142,16 @@ find_video_pgm_play_terminal() {
 
 # Run play-terminal without re-printing this merge script's figlet/version banner.
 # Seal re-exec exports SCRIPT_SELF_* into the environment; clear those so the child is itself.
+# Do not call `env` here — interactive PGM profiles often define an `env` function that only
+# prints a warning and never launches the player (stitch preview looked empty).
 run_video_pgm_play_terminal() {
   local player="$1"
   shift
-  env -u SCRIPT_SELF_SEALED -u SCRIPT_SELF_LIVE_PATH -u SCRIPT_SELF_SEAL_TMP \
-    SCRIPT_HEADER_QUIET=1 \
-    "$player" "$@"
+  (
+    unset SCRIPT_SELF_SEALED SCRIPT_SELF_LIVE_PATH SCRIPT_SELF_SEAL_TMP
+    export SCRIPT_HEADER_QUIET=1
+    exec "$player" "$@"
+  )
 }
 
 play_merge_seam_preview_once() {
