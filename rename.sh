@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261117.154700 - SQLite warmup shortfall: auto-continue tiny misses; ask only if large
 # v. 20261116.160000 - interactive multi-choice prompts use Up/Down arrow menus
 # v. 20261115.200000 - SUMMARY: Family-A chrome + Script/Version at top
 # v. 20261115.112000 - Contour Make/Model → YYYYMMDD_HHMMSS_-_-_Contour+2 (metadata first; upgrade Contour_2)
@@ -125,6 +126,8 @@
 # 2026.11.15 - v. 19.366.112000 - Contour: when Make=Contour (Model Contour*), rename bare /
 #   Contour-style timestamps to YYYYMMDD_HHMMSS_-_-_Contour+2.ext (label Contour+2 only); upgrade
 #   legacy _-_-_Contour_2; Ambarella raw path uses Contour+2 the same way; print Contour-metadata note
+# 2026.11.17 - v. 19.366.154700 - SQLite warmup shortfall: always warn, but skip the [C]/[Q]
+#   menu when the miss is tiny (≤5 rows or ≤0.1% of the snapshot). Larger shortfalls still ask.
 # 2026.11.11 - v. 19.365.094500 - Collision prompt: [E] auto-applies _OTHER (like [R]) for every further collision for the rest of this run; [D] remains directory-scoped only
 # 2026.11.03 - v. 19.363.073500 - GoPro capture-mode DB write uses INSERT…ON CONFLICT upsert (plain INSERT hit UNIQUE checked_paths.path when the in-memory cache missed an existing row). Progress/confirm helpers no longer write bare newlines to stdout (that leaked into $(transform_name) and showed NEW with the basename on the next line, unindented). emit_wrap and transform_name strip embedded CR/LF from paths.
 # 2026.10.20 - v. 19.362.205600 - Seal file name is .deleteme.rename.sh.seal.XXXXXX. If the seal copy cannot be created (e.g. read-only directory), startup continues on the live script instead of failing.
@@ -5854,16 +5857,26 @@ db_export_checked_paths_warmup_snapshot() {
     } | rename_sqlite3_db_run -separator '|' >"$out_file" 2>"$err_file"
 }
 
-# warmed_rows < expected: interactive [C]ontinue (default) / [Q]uit; non-interactive continues.
+# warmed_rows < expected: always warn. Tiny misses (≤5 rows or ≤0.1% of expected) auto-continue.
+# Larger shortfalls: interactive [C]ontinue (default) / [Q]uit; non-interactive continues.
 # Returns 0 to continue, exits on quit.
 db_prompt_warmup_shortfall() {
     local warmed="$1"
     local expected="$2"
     local skipped_paths="$3"
-    local answer=""
+    local answer="" pct_x10=0
 
     echo "WARNING: SQLite warmup loaded $warmed of $expected snapshot rows into memory ($skipped_paths row(s) had an unreadable stored path)." >&2
     echo "Those skipped rows will not be used for DB skip/hash lookups this run; the on-disk cache file was not modified." >&2
+
+    # Tiny shortfall: warn only (e.g. 1 of 22008). Ask only when the miss looks material.
+    if [[ "$skipped_paths" =~ ^[0-9]+$ && "$expected" =~ ^[1-9][0-9]*$ ]]; then
+        pct_x10=$(( skipped_paths * 1000 / expected ))
+        if (( skipped_paths <= 5 || pct_x10 <= 1 )); then
+            echo "Continuing with $warmed loaded cache rows (shortfall too small to prompt)." >&2
+            return 0
+        fi
+    fi
 
     if [[ ! -t 0 && ! -r /dev/tty ]]; then
         echo "Non-interactive session: continuing with the $warmed rows that loaded." >&2
