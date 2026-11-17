@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261117.165000 - "Output dates" → "Output file dates" (timestamps on the encode)
 # v. 20261117.161600 - existing-output prompt: drop "This file was not encoded"
 # v. 20261117.155100 - startup prompts: no double blank lines around ffmpeg / menus
 # v. 20261117.154200 - per-file banner: Directory: + basename Source/Output/Done
@@ -97,6 +98,8 @@
 # 2026.10.20 - v. 0.47 - after encode, if the source file name, filesystem time, and media CreateDate disagree, ask which to use (1/2/3…); default is the oldest usable date; stamps before 1990 are ignored; -y applies the oldest without asking
 # 2026.10.20 - v. 0.46 - Pick files: dialog has All and None buttons that reset every mark; the plain menu says A=all and N=none (those keys were already there)
 # 2026.10.14 - v. 0.45 - the output name is stem_xN.mp4; a later encode that would use the same name gets the start time in the name
+# 2026.11.17 - v. 0.74 - Say "Output file dates" (not "Output dates") — these are the
+#   timestamps written onto each encoded file.
 # 2026.11.17 - v. 0.73 - Existing-output conflict: say what [m]/[n] would name, not
 #   "This file was not encoded" (that read like a failure before you choose).
 # 2026.11.17 - v. 0.72 - Drop double blank lines between startup prompts (ffmpeg box /
@@ -444,7 +447,7 @@ tl_print_run_summary() {
   fi
   if (( ${TL_DATES_APPLIED:-0} + ${TL_DATES_KEPT:-0} + ${TL_DATES_OK:-0} + ${TL_DATES_NO_NAME:-0} > 0 )); then
     echo
-    echo "--- Output dates ---"
+    echo "--- Output file dates ---"
     (( ${TL_DATES_APPLIED:-0} > 0 )) && tl_summary_kv "Dates applied" "${TL_DATES_APPLIED} file(s)"
     (( ${TL_DATES_KEPT:-0} > 0 )) && tl_summary_kv "Dates kept" "${TL_DATES_KEPT} file(s) (as written)"
     (( ${TL_DATES_OK:-0} > 0 )) && tl_summary_kv "Dates already OK" "${TL_DATES_OK} file(s) (no prompt)"
@@ -1285,7 +1288,7 @@ tl_print_output_dates_header() {
   local f="$1"
   echo
   tl_rule
-  echo "$(tl_ts) Output dates: ${f##*/}"
+  echo "$(tl_ts) Output file dates: ${f##*/}"
   echo "$(tl_ts) Directory:  $(tl_abs_dir "$f")"
   tl_rule
 }
@@ -1725,13 +1728,13 @@ tl_ask_output_dates_upfront() {
 
   if (( need_n == 0 )); then
     echo
-    echo "$(tl_ts) Output dates: name / filesystem / media already agree for every file — no date question."
+    echo "$(tl_ts) Output file dates: name / filesystem / media already agree for every file — no date question."
     return 0
   fi
 
   echo
   tl_rule
-  echo "$(tl_ts) Output dates — choose before encoding (${need_n} of ${total} file(s) need a choice)"
+  echo "$(tl_ts) Output file dates — choose before encoding (${need_n} of ${total} file(s) need a choice)"
   tl_rule
   echo "  Sources come from each source video (file name, mtime, CreateDate)."
   echo "  After each encode the choice is applied; you will not be asked again between files."
@@ -1758,7 +1761,7 @@ tl_ask_output_dates_upfront() {
           (( i++ )) || true
           tl_compute_output_date_fields "" "$f" || continue
           if ! tl_read_one_file_date_menu "$f" \
-            "Output dates ${i}/${need_n}: ${f##*/}"; then
+            "Output file dates ${i}/${need_n}: ${f##*/}"; then
             return 2
           fi
           TL_DATE_CHOICE["$f"]="$TL_DATE_MENU_CHOICE"
@@ -1850,7 +1853,7 @@ tl_prompt_reconcile_output_times() {
   fi
 
   # Fallback: ask now (e.g. single-file path if upfront was skipped).
-  if ! tl_read_one_file_date_menu "$source_file" "Output dates: ${dest}"; then
+  if ! tl_read_one_file_date_menu "$source_file" "Output file dates: ${dest}"; then
     return 2
   fi
   tl_apply_resolved_date_choice "$dest" "$source_file" "$TL_DATE_MENU_CHOICE"
