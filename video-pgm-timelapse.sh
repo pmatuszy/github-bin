@@ -4102,7 +4102,7 @@ for tl_src in "${TL_INPUTS[@]}"; do
       if (( ${TL_SKIP_EXPLAINED:-0} )); then
         TL_SKIP_EXPLAINED=0
       else
-        echo "$(tl_ts) Skipped: ${tl_src}"
+        echo "$(tl_ts) Skipped: ${tl_src##*/}"
       fi
       ;;
     skip_all)
