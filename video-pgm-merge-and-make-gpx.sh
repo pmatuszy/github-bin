@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261117.145100 - chapter-plan size lines: align basename + | columns
 # v. 20261117.144500 - suspect plan: Contour review as clip + gap lines (C1)
 # v. 20261117.142800 - note processed sizes before deleting input chapters
 # v. 20261117.141000 - after Group finished: unthrottled self-update check
@@ -136,6 +137,8 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -
 
+# 2026.11.17 - v. 0.15.144 - Chapter-plan per-group file size lines pad basenames to a common
+#   width and use format_bytes_human_aligned so '|' columns line up within the group.
 # 2026.11.17 - v. 0.15.143 - Chapter-plan Contour suspect headers: short "[suspect n/m] N clips →
 #   out" line, then Contour review with every clip; gap on the same line as the clip before
 #   each join (last clip alone) — e.g. "…mp4   gap +26 s".
@@ -2655,9 +2658,9 @@ chapter_file_summary_line() {
   local base="${f##*/}" part sz dur dur_s
   sz=$(file_size_bytes "$f")
   if part=$(chapter_part_from_basename "$base" 2>/dev/null); then
-    printf 'part %02d  %s  %s' "$part" "$base" "$(format_bytes_human "$sz")"
+    printf 'part %02d  %s  %s' "$part" "$base" "$(format_bytes_human_aligned "$sz")"
   else
-    printf '%s  %s' "$base" "$(format_bytes_human "$sz")"
+    printf '%s  %s' "$base" "$(format_bytes_human_aligned "$sz")"
   fi
   if dur=$(ffprobe_duration_seconds "$f" 2>/dev/null) && [[ -n "$dur" ]]; then
     dur_s=$(format_duration_display "$dur")
@@ -2669,6 +2672,39 @@ chapter_file_summary_line() {
 print_chapter_file_line() {
   local indent="$1" f="$2"
   printf '%s%s\n' "$indent" "$(chapter_file_summary_line "$f")"
+}
+
+# Print every file in a group with basename padded to the group max width and
+# format_bytes_human_aligned sizes so '|' columns line up. Sets
+# PGM_CHAPTER_LINES_TOTAL_BYTES to the sum of sizes.
+print_chapter_file_lines_aligned() {
+  local indent="$1"
+  shift
+  local -a files=("$@")
+  local f base max_w=0 i sz dur dur_s
+  local -a bases=()
+
+  PGM_CHAPTER_LINES_TOTAL_BYTES=0
+  (( ${#files[@]} > 0 )) || return 0
+  for f in "${files[@]}"; do
+    base="${f##*/}"
+    bases+=("$base")
+    (( ${#base} > max_w )) && max_w=${#base}
+  done
+  for i in "${!files[@]}"; do
+    f="${files[i]}"
+    base="${bases[i]}"
+    sz=$(file_size_bytes "$f")
+    PGM_CHAPTER_LINES_TOTAL_BYTES=$(( PGM_CHAPTER_LINES_TOTAL_BYTES + sz ))
+    if dur=$(ffprobe_duration_seconds "$f" 2>/dev/null) && [[ -n "$dur" ]]; then
+      dur_s=$(format_duration_display "$dur")
+      printf '%s%-*s  %s  %s\n' \
+        "$indent" "$max_w" "$base" "$(format_bytes_human_aligned "$sz")" "$dur_s"
+    else
+      printf '%s%-*s  %s\n' \
+        "$indent" "$max_w" "$base" "$(format_bytes_human_aligned "$sz")"
+    fi
+  done
 }
 
 # Print full basename (never truncate — long GoPro names must stay readable).
@@ -7688,13 +7724,9 @@ print_group_plan() {
       else
         printf '  [forced] %d files → %s\n' "${#files[@]}" "${out_name##*/}"
       fi
-      group_bytes=0
-      for f in "${files[@]}"; do
-        print_chapter_file_line '      ' "$f"
-        sz=$(file_size_bytes "$f")
-        (( group_bytes += sz ))
-      done
-      printf '      input total (%d files): %s\n' "${#files[@]}" "$(format_bytes_human "$group_bytes")"
+      print_chapter_file_lines_aligned '      ' "${files[@]}"
+      printf '      input total (%d files): %s\n' \
+        "${#files[@]}" "$(format_bytes_human_aligned "${PGM_CHAPTER_LINES_TOTAL_BYTES:-0}")"
       echo
     done
     return 0
@@ -7736,13 +7768,9 @@ print_group_plan() {
         printf '  [group %d/%d] %d parts → %s\n' \
           "$gidx" "$part_groups" "${#files[@]}" "$out_name"
       fi
-      group_bytes=0
-      for f in "${files[@]}"; do
-        print_chapter_file_line '      ' "$f"
-        sz=$(file_size_bytes "$f")
-        (( group_bytes += sz ))
-      done
-      printf '      input total (%d files): %s\n' "${#files[@]}" "$(format_bytes_human "$group_bytes")"
+      print_chapter_file_lines_aligned '      ' "${files[@]}"
+      printf '      input total (%d files): %s\n' \
+        "${#files[@]}" "$(format_bytes_human_aligned "${PGM_CHAPTER_LINES_TOTAL_BYTES:-0}")"
       echo
     done
   fi
@@ -7788,13 +7816,9 @@ print_group_plan() {
             "$gidx" "$size_split_groups" "${#files[@]}" "$out_name"
         fi
       fi
-      group_bytes=0
-      for f in "${files[@]}"; do
-        print_chapter_file_line '      ' "$f"
-        sz=$(file_size_bytes "$f")
-        (( group_bytes += sz ))
-      done
-      printf '      input total (%d files): %s\n' "${#files[@]}" "$(format_bytes_human "$group_bytes")"
+      print_chapter_file_lines_aligned '      ' "${files[@]}"
+      printf '      input total (%d files): %s\n' \
+        "${#files[@]}" "$(format_bytes_human_aligned "${PGM_CHAPTER_LINES_TOTAL_BYTES:-0}")"
       echo
     done
   fi
@@ -7814,13 +7838,9 @@ print_group_plan() {
         printf '  [group %d/%d] %d clips (Contour) → %s\n' \
           "$gidx" "$contour_groups" "${#files[@]}" "$out_name"
       fi
-      group_bytes=0
-      for f in "${files[@]}"; do
-        print_chapter_file_line '      ' "$f"
-        sz=$(file_size_bytes "$f")
-        (( group_bytes += sz ))
-      done
-      printf '      input total (%d files): %s\n' "${#files[@]}" "$(format_bytes_human "$group_bytes")"
+      print_chapter_file_lines_aligned '      ' "${files[@]}"
+      printf '      input total (%d files): %s\n' \
+        "${#files[@]}" "$(format_bytes_human_aligned "${PGM_CHAPTER_LINES_TOTAL_BYTES:-0}")"
       echo
     done
   fi
@@ -7842,13 +7862,9 @@ print_group_plan() {
           "$gidx" "$contour_suspect_groups" "${#files[@]}" "$out_name"
       fi
       contour_print_suspect_review "${files[@]}"
-      group_bytes=0
-      for f in "${files[@]}"; do
-        print_chapter_file_line '      ' "$f"
-        sz=$(file_size_bytes "$f")
-        (( group_bytes += sz ))
-      done
-      printf '      input total (%d files): %s\n' "${#files[@]}" "$(format_bytes_human "$group_bytes")"
+      print_chapter_file_lines_aligned '      ' "${files[@]}"
+      printf '      input total (%d files): %s\n' \
+        "${#files[@]}" "$(format_bytes_human_aligned "${PGM_CHAPTER_LINES_TOTAL_BYTES:-0}")"
       echo
     done
   fi
@@ -7899,13 +7915,9 @@ print_group_plan() {
           "$gidx" "$dashcam_groups" "$DASHCAM_CAM" "${#files[@]}" "$out_name"
       fi
       print_dashcam_gpx_suggestion "$out_name" '      '
-      group_bytes=0
-      for f in "${files[@]}"; do
-        print_chapter_file_line '      ' "$f"
-        sz=$(file_size_bytes "$f")
-        (( group_bytes += sz ))
-      done
-      printf '      input total (%d files): %s\n' "${#files[@]}" "$(format_bytes_human "$group_bytes")"
+      print_chapter_file_lines_aligned '      ' "${files[@]}"
+      printf '      input total (%d files): %s\n' \
+        "${#files[@]}" "$(format_bytes_human_aligned "${PGM_CHAPTER_LINES_TOTAL_BYTES:-0}")"
       echo
     done
   fi
