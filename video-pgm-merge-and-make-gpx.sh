@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261117.120000 - seam times + delete prompts: print Directory: line
 # v. 20261117.102200 - seam preview defaults: 2s before + 2s after
 # v. 20261117.101500 - seam preview defaults: 1.5s before + 1.5s after
 # v. 20261117.091500 - join/seam preview: always /bin/env (never bare env)
@@ -131,6 +132,9 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -
 
+# 2026.11.17 - v. 0.15.139 - Seam-times summary and delete-input prompts print a Directory:
+#   line (absolute path via merge_inputs_dir) above the basename list — same cue as
+#   media-pgm-fix-dates / camera-metadata Processing banners.
 # 2026.11.17 - v. 0.15.138 - Terminal seam preview defaults: 2s before and 2s after each join
 #   (~4s clip). Override with --seam-before / --seam-after or env.
 # 2026.11.17 - v. 0.15.137 - Terminal seam preview defaults: 1.5s before and 1.5s after each
@@ -2196,7 +2200,7 @@ print_merge_seam_times_summary() {
   shift
   local -a files=("$@")
   local -a boundary_times=() boundary_left=() boundary_right=()
-  local i seam_num ord clock pos
+  local i seam_num ord clock pos dir=""
 
   if ! merge_compute_boundaries boundary_times boundary_left boundary_right "${files[@]}"; then
     return 1
@@ -2204,6 +2208,8 @@ print_merge_seam_times_summary() {
   (( ${#boundary_times[@]} > 0 )) || return 0
 
   echo "=== Seam times in output (${output_file##*/}) ==="
+  dir="$(merge_inputs_dir "${output_file:-${files[0]:-}}")"
+  [[ -n "$dir" ]] && printf '  Directory: %s\n' "$dir"
   for (( i = 0; i < ${#boundary_times[@]}; i++ )); do
     seam_num=$(( i + 1 ))
     ord="$(pgm_ordinal_seam_label "$seam_num")"
@@ -8100,6 +8106,7 @@ prompt_delete_merged_inputs() {
   else
     pgm_print_question "Delete the ${#files[@]} merged input chapter file(s)?"
   fi
+  printf '  Directory: %s\n' "$(merge_inputs_dir "${files[0]}")"
   for f in "${files[@]}"; do
     printf '    %s\n' "${f##*/}"
   done
@@ -8153,6 +8160,7 @@ prompt_confirm_delete_inputs() {
   local f choice
   echo
   pgm_print_question "Delete these ${#files[@]} input file(s)? The merged file stays. This cannot be undone."
+  printf '  Directory: %s\n' "$(merge_inputs_dir "${files[0]}")"
   for f in "${files[@]}"; do
     printf '    %s\n' "${f##*/}"
   done
