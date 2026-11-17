@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261117.084500 - SCRIPT_HEADER_QUIET=1 skips figlet / Interactive / version box
 # v. 20261116.181000 - script_arrow_menu: Space selects like Enter
 # v. 20261116.154800 - script_arrow_menu: fewer blank lines (no gap before hint / after select)
 # v. 20261116.151500 - shared script_arrow_menu (Up/Down + Enter) for interactive prompts
@@ -17,6 +18,10 @@
 # v. 20260716.173600 - print_version_banner uses CALLER_SCRIPT version fields
 # v. 20260716.163300 - versioning v. YYYYMMDD.HH24MISS; parse first # v. YYYYMMDD.HHMMSS line
 
+# 2026.11.17 - v. 1.70.084500 - SCRIPT_HEADER_QUIET=1 (or yes/true): skip figlet, "Interactive
+#                        session…", and the boxes version dump. Still seals, sets traps, and
+#                        script_is_run_interactively. Used when merge spawns play-terminal for a
+#                        short join/seam stitch so the merge banner is not reprinted every clip.
 # 2026.11.16 - v. 1.69.181000 - script_arrow_menu: Space accepts the highlighted row (same as Enter).
 # 2026.11.16 - v. 1.69.154800 - script_arrow_menu: drop blank line before the hint and after select.
 # 2026.11.16 - v. 1.69.151500 - Shared script_arrow_menu: Up/Down highlight, Enter select;
@@ -142,7 +147,9 @@ _SCRIPT_SELF_UPDATE_HELPER="$(cd "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/
 if [[ -f "${_SCRIPT_SELF_UPDATE_HELPER}" ]]; then
   # shellcheck source=/dev/null
   . "${_SCRIPT_SELF_UPDATE_HELPER}"
-  script_self_update_setup "${SCRIPT_SELF_LIVE_PATH:-$CALLER_SCRIPT}"
+  # Pass CALLER_SCRIPT only. setup clears foreign inherited SCRIPT_SELF_* and, when sealed for
+  # this same script, switches watch/identity to SCRIPT_SELF_LIVE_PATH.
+  script_self_update_setup "$CALLER_SCRIPT"
   # Seal re-exec leaves $0 as .deleteme.*.seal.*; prefer the live name for display/CLI.
   if declare -F script_self_update_apply_live_identity >/dev/null 2>&1; then
     script_self_update_apply_live_identity
@@ -474,16 +481,24 @@ function check_if_installed() {
 export tcScrTitleStart="\ek"
 export tcScrTitleEnd="\033\\"
 
+# Nested helpers (merge → play-terminal stitch) set SCRIPT_HEADER_QUIET=1 to skip the loud startup.
+_SCRIPT_HEADER_QUIET=0
+case "${SCRIPT_HEADER_QUIET:-}" in
+  1|yes|YES|true|TRUE|on|ON) _SCRIPT_HEADER_QUIET=1 ;;
+esac
+
 check_if_installed boxes BRAK OPTIONAL || true
 check_if_installed figlet BRAK OPTIONAL || true
 
 tty 2>&1 >/dev/null
 if (( $? == 0 )); then
   echo -ne "\033]0;$(script_version_title_prefix)${CALLER_SCRIPT_BASENAME}\007"
-  if type -fP figlet &>/dev/null; then
-    figlet -w 280 "${CALLER_SCRIPT_BASENAME}"
-  else
-    printf '%s\n' "${CALLER_SCRIPT_BASENAME}"
+  if (( ! _SCRIPT_HEADER_QUIET )); then
+    if type -fP figlet &>/dev/null; then
+      figlet -w 280 "${CALLER_SCRIPT_BASENAME}"
+    else
+      printf '%s\n' "${CALLER_SCRIPT_BASENAME}"
+    fi
   fi
 fi
 
@@ -539,14 +554,17 @@ tty 2>&1 >/dev/null
 if (( $? != 0 )) ; then      # we set RANDOM_DELAY only when running NOT from terminal
   script_is_run_interactively=0
   export RANDOM_DELAY=$((RANDOM % $MAX_RANDOM_DELAY_IN_SEC ))
-  if (( $FORCE_NO_STARTUP_DELAY_var != 1 )); then # we do the delay only when is it NOT requested by command line parameter...
+  if (( $FORCE_NO_STARTUP_DELAY_var != 1 && ! _SCRIPT_HEADER_QUIET )); then
     sleep $RANDOM_DELAY
   fi
 else
-  echo "Interactive session detected: I will NOT introduce RANDOM_DELAY...";echo
   script_is_run_interactively=1
-  echo "${SCRIPT_VERSION}" ; echo
+  if (( ! _SCRIPT_HEADER_QUIET )); then
+    echo "Interactive session detected: I will NOT introduce RANDOM_DELAY...";echo
+    echo "${SCRIPT_VERSION}" ; echo
+  fi
 fi
+unset _SCRIPT_HEADER_QUIET
 
 #######################################################################################
 # Shared terminal colors for interactive audio / media / video scripts.

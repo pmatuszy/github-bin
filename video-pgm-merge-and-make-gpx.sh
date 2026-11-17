@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261117.084500 - join/seam preview: no merge figlet/banner (SCRIPT_HEADER_QUIET)
 # v. 20261117.083000 - group merge default: Preview joins (then Merge after a preview)
 # v. 20261117.082000 - fix CreateDate batch: literal tab in exiftool -p ( ${tab} was "-")
 # v. 20261117.073100 - Contour link parse also for suspect chains / gap labels
@@ -126,6 +127,9 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -
 
+# 2026.11.17 - v. 0.15.134 - Join/seam preview no longer reprints the merge figlet + version box.
+#   play-terminal is started with SCRIPT_HEADER_QUIET=1 and without inherited SCRIPT_SELF_* seal
+#   env (those made the child banner show video-pgm-merge-and-make-gpx.sh).
 # 2026.11.17 - v. 0.15.133 - Normal group merge prompt defaults to [1] Preview joins (same as
 #   Contour suspect / remux); after a preview, default becomes [Y] Merge / remux.
 # 2026.11.17 - v. 0.15.132 - CreateDate batch used exiftool -p '${tab}', which this exiftool
@@ -2132,6 +2136,16 @@ find_video_pgm_play_terminal() {
   return 1
 }
 
+# Run play-terminal without re-printing this merge script's figlet/version banner.
+# Seal re-exec exports SCRIPT_SELF_* into the environment; clear those so the child is itself.
+run_video_pgm_play_terminal() {
+  local player="$1"
+  shift
+  env -u SCRIPT_SELF_SEALED -u SCRIPT_SELF_LIVE_PATH -u SCRIPT_SELF_SEAL_TMP \
+    SCRIPT_HEADER_QUIET=1 \
+    "$player" "$@"
+}
+
 play_merge_seam_preview_once() {
   local player="$1" output_file="$2" boundary="$3" left="$4" right="$5"
   local seam_num="$6" total_seams="$7" ord="$8"
@@ -2159,7 +2173,7 @@ play_merge_seam_preview_once() {
   if [[ -n "$preview_w" && -n "$preview_h" ]]; then
     echo "  Preview size: ${preview_w} x ${preview_h} terminal cells."
   fi
-  "${player}" "${player_args[@]}" "$output_file"
+  run_video_pgm_play_terminal "$player" "${player_args[@]}" "$output_file"
 }
 
 # List every join time as H:MM:SS (for seeking in another player).
@@ -2513,7 +2527,7 @@ play_pre_merge_join_preview_once() {
     echo "  Preview size: ${preview_w} x ${preview_h} terminal cells."
   fi
   echo "  Playing stitch…"
-  "${player}" "${player_args[@]}" "$preview" || true
+  run_video_pgm_play_terminal "$player" "${player_args[@]}" "$preview" || true
 }
 
 # Pre-merge [1]: stitch+play each join immediately (no second Y/n menu).

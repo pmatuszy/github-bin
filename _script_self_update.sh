@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261117.084500 - ignore inherited SCRIPT_SELF_* seal env from a different parent script
 # v. 20261116.152500 - after [R]/[C]/[Q], drain leftover Enter from the tty so the next prompt is not auto-answered
 # v. 20261102.155130 - DEBUG trap must not clear BASH_REMATCH
 # v. 20261021.210400 - script_live_basename here; prefer SCRIPT_SELF_LIVE_PATH over stale CALLER_*
@@ -8,6 +9,11 @@
 # v. 20261020.202500 - detect live-script overwrite (git pull then copy into bin/) mid-run
 # v. 20261020.202200 - detect on-disk script replacement while a run is in progress
 #
+# 2026.11.17 - v. 1.8.084500 - Seal exports SCRIPT_SELF_LIVE_PATH / SCRIPT_SELF_SEALED for re-exec of
+#   the same script. Child helpers (e.g. video-pgm-play-terminal.sh spawned from merge) inherited
+#   those vars and then printed the parent's figlet/banner (merge name/version). Clear foreign seal
+#   env when the caller's basename does not match SCRIPT_SELF_LIVE_PATH (seal .deleteme.* names
+#   normalize to the live basename first).
 # 2026.11.16 - v. 1.7.152500 - After the single-key [R]/[C]/[Q] answer, drain leftover bytes
 #   (especially Enter) from /dev/tty and stdin. Without that, Continue left a newline in the
 #   buffer and the next one-key menu (e.g. Contour suspect, default Skip) was answered
@@ -505,9 +511,68 @@ script_self_update_apply_live_identity() {
   export CALLER_SCRIPT CALLER_SCRIPT_BASENAME SCRIPT_SELF_LIVE_PATH
 }
 
+# Normalize .deleteme.<name>.seal.XXXX → <name> for comparing seal vs live basenames.
+script_self_update_live_basename_of() {
+  local base
+  base="$(basename -- "${1:-}")"
+  case "$base" in
+    .deleteme.*.seal.*)
+      base="${base#.deleteme.}"
+      base="${base%.seal.*}"
+      ;;
+  esac
+  printf '%s\n' "$base"
+}
+
+# Seal re-exec exports SCRIPT_SELF_* so the same script can restore identity. Child processes
+# inherit that env; if their caller is a different script, drop the parent's seal state.
+script_self_update_clear_foreign_seal() {
+  local this="${1:-${CALLER_SCRIPT:-${0:-}}}"
+  local this_base live_base seal_base this_raw
+
+  [[ -n "${SCRIPT_SELF_SEALED:-}${SCRIPT_SELF_LIVE_PATH:-}" ]] || return 0
+
+  this_base="$(script_self_update_live_basename_of "$this")"
+  live_base="$(basename -- "${SCRIPT_SELF_LIVE_PATH:-}")"
+  if [[ -n "$this_base" && -n "$live_base" && "$this_base" != "$live_base" ]]; then
+    unset SCRIPT_SELF_SEALED SCRIPT_SELF_LIVE_PATH SCRIPT_SELF_SEAL_TMP
+    SCRIPT_SELF_UPDATE_STATE=off
+    SCRIPT_SELF_UPDATE_PATH=""
+    SCRIPT_SELF_UPDATE_FP=""
+    SCRIPT_SELF_UPDATE_DEBUG_TRAP_INSTALLED=0
+    return 0
+  fi
+
+  # SEALED set but we are not executing that seal file (inherited from parent only).
+  if [[ -n "${SCRIPT_SELF_SEALED:-}" && -n "${SCRIPT_SELF_SEAL_TMP:-}" ]]; then
+    seal_base="$(basename -- "${SCRIPT_SELF_SEAL_TMP}")"
+    this_raw="$(basename -- "$this")"
+    if [[ "$this_raw" != "$seal_base" && "${0##*/}" != "$seal_base" ]]; then
+      unset SCRIPT_SELF_SEALED SCRIPT_SELF_LIVE_PATH SCRIPT_SELF_SEAL_TMP
+      SCRIPT_SELF_UPDATE_STATE=off
+      SCRIPT_SELF_UPDATE_PATH=""
+      SCRIPT_SELF_UPDATE_FP=""
+      SCRIPT_SELF_UPDATE_DEBUG_TRAP_INSTALLED=0
+    fi
+  fi
+}
+
 # init live path → seal (exec, no return) → after re-entry: init + watch trap + seal cleanup.
 script_self_update_setup() {
   local live="${1:-}"
+  local caller_base live_arg_base
+
+  script_self_update_clear_foreign_seal "${CALLER_SCRIPT:-${0:-}}"
+
+  # Header used to pass "${SCRIPT_SELF_LIVE_PATH:-$CALLER_SCRIPT}"; that expands the parent's
+  # live path before we clear foreign seal. Prefer CALLER_SCRIPT when $1 is a different script.
+  if [[ -n "${CALLER_SCRIPT:-}" ]]; then
+    caller_base="$(script_self_update_live_basename_of "$CALLER_SCRIPT")"
+    live_arg_base="$(script_self_update_live_basename_of "${live:-}")"
+    if [[ -z "$live" || ( -n "$caller_base" && -n "$live_arg_base" && "$caller_base" != "$live_arg_base" ) ]]; then
+      live="$CALLER_SCRIPT"
+    fi
+  fi
 
   if [[ -n "${SCRIPT_SELF_SEALED:-}" ]]; then
     # Already running from a sealed temp copy — watch the live destination path.
