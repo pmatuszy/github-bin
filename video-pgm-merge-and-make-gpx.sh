@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261117.142800 - note processed sizes before deleting input chapters
 # v. 20261117.141000 - after Group finished: unthrottled self-update check
 # v. 20261117.140000 - delete prompts: Merged output (stays) + Input chapters (delete)
 # v. 20261117.120000 - seam times + delete prompts: print Directory: line
@@ -134,6 +135,8 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -
 
+# 2026.11.17 - v. 0.15.142 - Call pgm_note_processed_group before delete prompts so SUMMARY
+#   Input size still reflects chapter bytes (stat after delete returned 0).
 # 2026.11.17 - v. 0.15.141 - After each "Group finished", call script_self_update_check_now so a
 #   mid-run cp into /root/bin is noticed between groups (not only after the 30s DEBUG throttle,
 #   which often surfaced only on Quit). Periodic DEBUG watch remains as backup.
@@ -8808,6 +8811,8 @@ run_merge_group() {
     echo
     print_merge_size_summary "$output_file" "${files[@]}"
     print_merge_boundaries_report "$output_file" "${files[@]}"
+    # Size chapters while they still exist (delete prompts below remove them).
+    pgm_note_processed_group "$output_file" "${files[@]}"
     prompt_seam_terminal_previews "$output_file" "${files[@]}"
     rc=$?
     if (( rc == 2 )); then
@@ -8818,7 +8823,6 @@ run_merge_group() {
     if (( rc == 2 )); then
       return 2
     fi
-    pgm_note_processed_group "$output_file" "${files[@]}"
     echo "$(pgm_ts) Group finished: ${output_file}"
     # Notice a mid-run install of this script before the next group menu (30s DEBUG throttle
     # alone often delayed the [R]/[C]/[Q] prompt until Quit / teardown).
