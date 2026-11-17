@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261117.144500 - suspect plan: Contour review as clip + gap lines (C1)
 # v. 20261117.142800 - note processed sizes before deleting input chapters
 # v. 20261117.141000 - after Group finished: unthrottled self-update check
 # v. 20261117.140000 - delete prompts: Merged output (stays) + Input chapters (delete)
@@ -135,6 +136,9 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -
 
+# 2026.11.17 - v. 0.15.143 - Chapter-plan Contour suspect headers: short "[suspect n/m] N clips →
+#   out" line, then Contour review with every clip; gap on the same line as the clip before
+#   each join (last clip alone) — e.g. "…mp4   gap +26 s".
 # 2026.11.17 - v. 0.15.142 - Call pgm_note_processed_group before delete prompts so SUMMARY
 #   Input size still reflects chapter bytes (stat after delete returned 0).
 # 2026.11.17 - v. 0.15.141 - After each "Group finished", call script_self_update_check_now so a
@@ -5754,6 +5758,7 @@ group_is_contour_suspect() {
 }
 
 # Human note of suspect-band gaps inside a Contour run (e.g. "+54s after 20130809_083622.mp4").
+# Still used in group banners / prompts; chapter-plan listing uses contour_print_suspect_review.
 contour_suspect_gap_note() {
   local -a run=("$@")
   local i n=${#run[@]} delta parts=() pb
@@ -5773,6 +5778,36 @@ contour_suspect_gap_note() {
   (( ${#parts[@]} > 0 )) || return 1
   local IFS='; '
   printf '%s\n' "${parts[*]}"
+}
+
+# Chapter-plan Contour review: every clip; gap to next on the same line (last clip alone).
+#   Contour review:
+#     clip1.mp4   gap +26 s
+#     clip2.mp4   gap +34 s
+#     clip3.mp4
+contour_print_suspect_review() {
+  local -a files=("$@")
+  local i n delta gap_txt
+  n=${#files[@]}
+  (( n >= 1 )) || return 0
+  echo "    Contour review:"
+  for (( i = 0; i < n; i++ )); do
+    if (( i < n - 1 )); then
+      delta=$(contour_chapter_time_delta "${files[i]}" "${files[i + 1]}" 2>/dev/null) || delta=""
+      if [[ -n "$delta" ]]; then
+        if (( delta >= 0 )); then
+          gap_txt="gap +${delta} s"
+        else
+          gap_txt="gap ${delta} s"
+        fi
+        printf '      %s   %s\n' "${files[i]##*/}" "$gap_txt"
+      else
+        printf '      %s\n' "${files[i]##*/}"
+      fi
+    else
+      printf '      %s\n' "${files[i]##*/}"
+    fi
+  done
 }
 
 contour_group_output_file() {
@@ -7795,18 +7830,18 @@ print_group_plan() {
     gidx=0
     for i in "${!CONTOUR_SUSPECT_BLOBS[@]}"; do
       blob="${CONTOUR_SUSPECT_BLOBS[$i]}"
-      note="${CONTOUR_SUSPECT_NOTES[$i]:-suspect gap}"
       group_files_to_array "$blob" files
       (( ${#files[@]} < 2 )) && continue
       (( gidx++ )) || true
       out_name=$(group_output_file "${files[@]}")
       if [[ -e "$out_name" ]]; then
-        printf '  [suspect %d/%d] %d clips (Contour review: %s) → %s  (already merged)\n' \
-          "$gidx" "$contour_suspect_groups" "${#files[@]}" "$note" "$out_name"
+        printf '  [suspect %d/%d] %d clips → %s  (already merged)\n' \
+          "$gidx" "$contour_suspect_groups" "${#files[@]}" "$out_name"
       else
-        printf '  [suspect %d/%d] %d clips (Contour review: %s) → %s\n' \
-          "$gidx" "$contour_suspect_groups" "${#files[@]}" "$note" "$out_name"
+        printf '  [suspect %d/%d] %d clips → %s\n' \
+          "$gidx" "$contour_suspect_groups" "${#files[@]}" "$out_name"
       fi
+      contour_print_suspect_review "${files[@]}"
       group_bytes=0
       for f in "${files[@]}"; do
         print_chapter_file_line '      ' "$f"
