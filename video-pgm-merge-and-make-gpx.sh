@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261117.082000 - fix CreateDate batch: literal tab in exiftool -p ( ${tab} was "-")
 # v. 20261117.073100 - Contour link parse also for suspect chains / gap labels
 # v. 20261117.073000 - force/Contour merge: extend concat_parts range (don't reuse input name)
 # v. 20261116.225500 - Contour suspect defaults to Preview joins; delete confirm defaults Yes
@@ -124,6 +125,11 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -
 
+# 2026.11.17 - v. 0.15.132 - CreateDate batch used exiftool -p '${tab}', which this exiftool
+#   prints as "-" (unknown tag) under -f; lines had no real tabs so every CreateDate was
+#   dropped and hybrid start always used the filename. Contour names are often ~end times
+#   (CreateDate+duration), so chapter gaps looked huge and true continuations were missed.
+#   Use a literal tab in the -p format string.
 # 2026.11.17 - v. 0.15.131 - Forced merge of an existing *_concat_parts_* plus more chapters
 #   names a new file (extend 01-02 + one chapter → 01-03), not the same path as the first input.
 #   Contour *_Contour_concat_parts_* outputs can chain with following Contour chapters.
@@ -4729,8 +4735,10 @@ pgm_media_createdate_batch_fill() {
         fi
       fi
     done < <(
+      # Literal \t — exiftool ${tab} is not expanded here and becomes "-" with -f,
+      # so the reader never saw field separators and dropped every CreateDate.
       "$exif" -api largefilesupport=1 -api QuickTimeUTC=1 -q -q -f \
-        -d '%Y-%m-%d %H:%M:%S' -p '$FilePath${tab}$CreateDate${tab}$MediaUID' -- "${chunk[@]}" 2>/dev/null
+        -d '%Y-%m-%d %H:%M:%S' -p $'$FilePath\t$CreateDate\t$MediaUID' -- "${chunk[@]}" 2>/dev/null
     )
     # Mark any chunk files exiftool omitted as known misses.
     for f in "${chunk[@]}"; do
