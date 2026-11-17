@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261117.102200 - seam preview defaults: 2s before + 2s after
 # v. 20261117.101500 - seam preview defaults: 1.5s before + 1.5s after
 # v. 20261117.091500 - join/seam preview: always /bin/env (never bare env)
 # v. 20261117.091300 - join/seam preview: do not call env (PGM env function broke play)
@@ -130,6 +131,8 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -
 
+# 2026.11.17 - v. 0.15.138 - Terminal seam preview defaults: 2s before and 2s after each join
+#   (~4s clip). Override with --seam-before / --seam-after or env.
 # 2026.11.17 - v. 0.15.137 - Terminal seam preview defaults: 1.5s before and 1.5s after each
 #   join (was 1s + 1s; ~3s clip). Override with --seam-before / --seam-after or env.
 # 2026.11.17 - v. 0.15.136 - House rule: always invoke /bin/env (never bare env). Join/seam
@@ -405,9 +408,9 @@ Options:
   -y, --yes            Merge every detected multi-part group without prompts (for cron).
   --read-timeout SEC   Single-key prompt timeout in seconds (0 = wait forever).
                        Default: wait forever. Env: PGM_READ_TIMEOUT (e.g. 300).
-  --seam-before SEC    Terminal seam preview: seconds before each join (default 1.5).
+  --seam-before SEC    Terminal seam preview: seconds before each join (default 2).
                        Env: PGM_SEAM_PREVIEW_BEFORE.
-  --seam-after SEC     Terminal seam preview: seconds after each join (default 1.5).
+  --seam-after SEC     Terminal seam preview: seconds after each join (default 2).
                        Env: PGM_SEAM_PREVIEW_AFTER.
   --gps-dir DIR        Also search DIR, and every directory inside it, for GPSData*.txt.
                        Repeat for more than one. A Windows path such as
@@ -564,8 +567,8 @@ Environment:
   MP4_MERGE_REPO          GitHub repo for releases (default: gyroflow/mp4-merge).
   PGM_READ_TIMEOUT        Seconds per single-key prompt; unset or 0 = wait forever.
                           Overridden by --read-timeout.
-  PGM_SEAM_PREVIEW_BEFORE Seconds before each merge point in terminal preview (default: 1.5).
-  PGM_SEAM_PREVIEW_AFTER  Seconds after each merge point in terminal preview (default: 1.5).
+  PGM_SEAM_PREVIEW_BEFORE Seconds before each merge point in terminal preview (default: 2).
+  PGM_SEAM_PREVIEW_AFTER  Seconds after each merge point in terminal preview (default: 2).
   PGM_SEAM_PREVIEW_WIDTH  Terminal tct width for seam preview (default: 100; empty = autodetect).
   PGM_SEAM_PREVIEW_HEIGHT Terminal tct height for seam preview (default: 40; empty = autodetect).
   PGM_JOIN_PREVIEW_BEFORE Seconds from the end of clip N in pre-merge [1] join preview (default: 2).
@@ -9945,10 +9948,10 @@ PGM_MERGE_TEMP_CLI=0
 GPS_DIRS=()
 FORCE_MERGE_ARGS=()
 
-PGM_SEAM_PREVIEW_BEFORE="${PGM_SEAM_PREVIEW_BEFORE:-1.5}"
+PGM_SEAM_PREVIEW_BEFORE="${PGM_SEAM_PREVIEW_BEFORE:-2}"
 PGM_JOIN_PREVIEW_BEFORE="${PGM_JOIN_PREVIEW_BEFORE:-2}"
 PGM_JOIN_PREVIEW_AFTER="${PGM_JOIN_PREVIEW_AFTER:-2}"
-PGM_SEAM_PREVIEW_AFTER="${PGM_SEAM_PREVIEW_AFTER:-1.5}"
+PGM_SEAM_PREVIEW_AFTER="${PGM_SEAM_PREVIEW_AFTER:-2}"
 PGM_SEAM_PREVIEW_WIDTH="${PGM_SEAM_PREVIEW_WIDTH-100}"
 PGM_SEAM_PREVIEW_HEIGHT="${PGM_SEAM_PREVIEW_HEIGHT-40}"
 while [[ $# -gt 0 ]]; do
