@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261117.165300 - timestamps UX: not file naming; quiet apply when already chosen
 # v. 20261117.165000 - "Output dates" → "Output file dates" (timestamps on the encode)
 # v. 20261117.161600 - existing-output prompt: drop "This file was not encoded"
 # v. 20261117.155100 - startup prompts: no double blank lines around ffmpeg / menus
@@ -98,6 +99,9 @@
 # 2026.10.20 - v. 0.47 - after encode, if the source file name, filesystem time, and media CreateDate disagree, ask which to use (1/2/3…); default is the oldest usable date; stamps before 1990 are ignored; -y applies the oldest without asking
 # 2026.10.20 - v. 0.46 - Pick files: dialog has All and None buttons that reset every mark; the plain menu says A=all and N=none (those keys were already there)
 # 2026.10.14 - v. 0.45 - the output name is stem_xN.mp4; a later encode that would use the same name gets the start time in the name
+# 2026.11.17 - v. 0.75 - Timestamp step is not about output names: menu says "Date from
+#   file name"; banners say "Timestamps on encoded file"; skip the framed header when
+#   the choice was already made upfront (just apply).
 # 2026.11.17 - v. 0.74 - Say "Output file dates" (not "Output dates") — these are the
 #   timestamps written onto each encoded file.
 # 2026.11.17 - v. 0.73 - Existing-output conflict: say what [m]/[n] would name, not
@@ -447,7 +451,7 @@ tl_print_run_summary() {
   fi
   if (( ${TL_DATES_APPLIED:-0} + ${TL_DATES_KEPT:-0} + ${TL_DATES_OK:-0} + ${TL_DATES_NO_NAME:-0} > 0 )); then
     echo
-    echo "--- Output file dates ---"
+    echo "--- Encoded-file timestamps ---"
     (( ${TL_DATES_APPLIED:-0} > 0 )) && tl_summary_kv "Dates applied" "${TL_DATES_APPLIED} file(s)"
     (( ${TL_DATES_KEPT:-0} > 0 )) && tl_summary_kv "Dates kept" "${TL_DATES_KEPT} file(s) (as written)"
     (( ${TL_DATES_OK:-0} > 0 )) && tl_summary_kv "Dates already OK" "${TL_DATES_OK} file(s) (no prompt)"
@@ -1288,7 +1292,7 @@ tl_print_output_dates_header() {
   local f="$1"
   echo
   tl_rule
-  echo "$(tl_ts) Output file dates: ${f##*/}"
+  echo "$(tl_ts) Timestamps on encoded file: ${f##*/}"
   echo "$(tl_ts) Directory:  $(tl_abs_dir "$f")"
   tl_rule
 }
@@ -1309,7 +1313,7 @@ tl_print_before_after() {
   echo
   echo "  === Result (before -> after) =========================================="
   printf '  %-18s %-21s %s\n' "" "Before" "After"
-  tl_print_ba_row "File name" "$b_name" "$a_name"
+  tl_print_ba_row "Date from name" "$b_name" "$a_name"
   tl_print_ba_row "Filesystem" "$b_fs" "$a_fs"
   tl_print_ba_row "Media tags" "$b_media" "$a_media"
   echo "  ======================================================================"
@@ -1480,9 +1484,9 @@ tl_compute_output_date_fields() {
     TL_DF_NEED_ASK=1
   fi
 
-  TL_DF_LABELS=("File name" "Filesystem" "Media tags" "Keep as written")
+  TL_DF_LABELS=("Date from file name" "Filesystem" "Media tags" "Keep as written")
   TL_DF_EPOCHS=("$name_e" "$fs_show" "$media_e" "")
-  TL_DF_NOTES=("(from source name)")
+  TL_DF_NOTES=("(clock time inside the source name)")
   if [[ -n "$fs_show" ]]; then
     TL_DF_NOTES+=("(mtime)")
   else
@@ -1598,9 +1602,10 @@ tl_read_one_file_date_menu() {
     echo "$(tl_ts) ${title}"
     tl_rule
   fi
-  printf '  Source name stamp from:  %s\n' "${source_file##*/}"
+  printf '  Date stamp read from source:  %s\n' "${source_file##*/}"
   echo
-  echo "  Sources (oldest usable is the default; applying it sets media CreateDate and filesystem times):"
+  echo "  Which clock time to write onto the encoded file (CreateDate + filesystem times)?"
+  echo "  This does not rename anything. Oldest usable is the default."
   echo "  1–4 = this file only. Letter keys = this file and every later file that still needs a choice."
   echo
   for (( i = 0; i < n; i++ )); do
@@ -1617,12 +1622,12 @@ tl_read_one_file_date_menu() {
         note="(oldest - default)"
       fi
     fi
-    label="$(printf '%-18s %-19s  %s' "${TL_DF_LABELS[i]}" "$disp" "$note")"
+    label="$(printf '%-22s %-19s  %s' "${TL_DF_LABELS[i]}" "$disp" "$note")"
     arrow_opts+=("$((i + 1))|${label}")
   done
   arrow_opts+=(
     "a|Always oldest usable for the rest of this run"
-    "n|Always file name for the rest of this run"
+    "n|Always date from file name for the rest of this run"
     "f|Always filesystem for the rest of this run"
     "m|Always media tags for the rest of this run"
     "k|Always keep as written for the rest of this run"
@@ -1645,12 +1650,12 @@ tl_read_one_file_date_menu() {
         ;;
       n)
         if [[ -z "${TL_DF_EPOCHS[0]:-}" ]]; then
-          echo "$(tl_ts) File name is n/a (not usable). Pick another."
+          echo "$(tl_ts) Date from file name is n/a (not usable). Pick another."
           continue
         fi
-        tl_print_selected "n = Always file name for the rest of this run"
+        tl_print_selected "n = Always date from file name for the rest of this run"
         tl_date_set_policy_for_rest name
-        echo "$(tl_ts) Will use the file name stamp for this file and every later one."
+        echo "$(tl_ts) Will use the date from the file name for this file and every later one."
         return 0
         ;;
       f)
@@ -1728,21 +1733,22 @@ tl_ask_output_dates_upfront() {
 
   if (( need_n == 0 )); then
     echo
-    echo "$(tl_ts) Output file dates: name / filesystem / media already agree for every file — no date question."
+    echo "$(tl_ts) Encoded-file timestamps: name / filesystem / media already agree for every file — no question."
     return 0
   fi
 
   echo
   tl_rule
-  echo "$(tl_ts) Output file dates — choose before encoding (${need_n} of ${total} file(s) need a choice)"
+  echo "$(tl_ts) Encoded-file timestamps — choose before encoding (${need_n} of ${total} file(s) need a choice)"
   tl_rule
-  echo "  Sources come from each source video (file name, mtime, CreateDate)."
+  echo "  Pick which clock time to stamp onto each encoded file (not the output name)."
+  echo "  Sources: date inside the source file name, filesystem mtime, or media CreateDate."
   echo "  After each encode the choice is applied; you will not be asked again between files."
   echo
   while true; do
     tl_arrow_menu p \
       "p|Pick per file now" \
-      "1|File name for every file" \
+      "1|Date from file name for every file" \
       "2|Filesystem for every file" \
       "3|Media tags for every file" \
       "4|Keep as written for every file" \
@@ -1761,7 +1767,7 @@ tl_ask_output_dates_upfront() {
           (( i++ )) || true
           tl_compute_output_date_fields "" "$f" || continue
           if ! tl_read_one_file_date_menu "$f" \
-            "Output file dates ${i}/${need_n}: ${f##*/}"; then
+            "Encoded-file timestamps ${i}/${need_n}: ${f##*/}"; then
             return 2
           fi
           TL_DATE_CHOICE["$f"]="$TL_DATE_MENU_CHOICE"
@@ -1782,9 +1788,9 @@ tl_ask_output_dates_upfront() {
         return 0
         ;;
       1)
-        tl_print_selected "1 = File name for every file"
+        tl_print_selected "1 = Date from file name for every file"
         tl_date_set_policy_for_rest name
-        echo "$(tl_ts) Will set output times from the file name for every file."
+        echo "$(tl_ts) Will set output times from the date in the file name for every file."
         return 0
         ;;
       2)
@@ -1831,8 +1837,7 @@ tl_prompt_reconcile_output_times() {
   fi
 
   if (( TL_ALWAYS_KEEP )); then
-    tl_print_output_dates_header "$dest"
-    printf '  Source name stamp from:  %s\n' "${source_file##*/}"
+    # Choice already made for the run — apply quietly (no framed re-ask banner).
     tl_apply_resolved_date_choice "$dest" "$source_file" keep
     return 0
   fi
@@ -1846,14 +1851,13 @@ tl_prompt_reconcile_output_times() {
   fi
 
   if [[ -n "$choice" ]]; then
-    tl_print_output_dates_header "$dest"
-    printf '  Source name stamp from:  %s\n' "${source_file##*/}"
+    # Choice already made upfront — apply quietly.
     tl_apply_resolved_date_choice "$dest" "$source_file" "$choice"
     return 0
   fi
 
   # Fallback: ask now (e.g. single-file path if upfront was skipped).
-  if ! tl_read_one_file_date_menu "$source_file" "Output file dates: ${dest}"; then
+  if ! tl_read_one_file_date_menu "$source_file" "Timestamps on encoded file: ${dest##*/}"; then
     return 2
   fi
   tl_apply_resolved_date_choice "$dest" "$source_file" "$TL_DATE_MENU_CHOICE"
