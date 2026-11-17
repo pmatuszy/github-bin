@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261117.161600 - existing-output prompt: drop "This file was not encoded"
 # v. 20261117.155100 - startup prompts: no double blank lines around ffmpeg / menus
 # v. 20261117.154200 - per-file banner: Directory: + basename Source/Output/Done
 # v. 20261117.150900 - before-files prompt: "How to encode" one go / one by one
@@ -96,6 +97,8 @@
 # 2026.10.20 - v. 0.47 - after encode, if the source file name, filesystem time, and media CreateDate disagree, ask which to use (1/2/3…); default is the oldest usable date; stamps before 1990 are ignored; -y applies the oldest without asking
 # 2026.10.20 - v. 0.46 - Pick files: dialog has All and None buttons that reset every mark; the plain menu says A=all and N=none (those keys were already there)
 # 2026.10.14 - v. 0.45 - the output name is stem_xN.mp4; a later encode that would use the same name gets the start time in the name
+# 2026.11.17 - v. 0.73 - Existing-output conflict: say what [m]/[n] would name, not
+#   "This file was not encoded" (that read like a failure before you choose).
 # 2026.11.17 - v. 0.72 - Drop double blank lines between startup prompts (ffmpeg box /
 #   Encode display / More choices); rely on one blank from the previous block.
 # 2026.11.17 - v. 0.71 - Per-file encode banner prints Directory: (absolute) once; Source /
@@ -2496,9 +2499,9 @@ tl_prompt_existing_output() {
   aside="$(tl_aside_name "$dest")"
   next="$(tl_next_take_name "$dest")"
   echo
-  echo "This file was not encoded."
-  echo "  Rename aside: ${aside##*/}"
-  echo "  New name:     ${next##*/}"
+  echo "What to do with the existing file?"
+  echo "  [m] would rename it to: ${aside##*/}"
+  echo "  [n] would write to:     ${next##*/}"
   tl_arrow_menu k \
     "k|Keep it and skip" \
     "r|Replace it with this encode" \
