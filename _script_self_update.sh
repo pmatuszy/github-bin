@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261117.141000 - script_self_update_check_now: unthrottled live-path check
 # v. 20261117.084500 - ignore inherited SCRIPT_SELF_* seal env from a different parent script
 # v. 20261116.152500 - after [R]/[C]/[Q], drain leftover Enter from the tty so the next prompt is not auto-answered
 # v. 20261102.155130 - DEBUG trap must not clear BASH_REMATCH
@@ -9,6 +10,9 @@
 # v. 20261020.202500 - detect live-script overwrite (git pull then copy into bin/) mid-run
 # v. 20261020.202200 - detect on-disk script replacement while a run is in progress
 #
+# 2026.11.17 - v. 1.9.141000 - script_self_update_check_now: ignore the DEBUG throttle and check
+#   the live path immediately (for callers such as merge after "Group finished"). The periodic
+#   DEBUG trap (SCRIPT_SELF_UPDATE_INTERVAL_SEC, default 30) stays as a backup during long work.
 # 2026.11.17 - v. 1.8.084500 - Seal exports SCRIPT_SELF_LIVE_PATH / SCRIPT_SELF_SEALED for re-exec of
 #   the same script. Child helpers (e.g. video-pgm-play-terminal.sh spawned from merge) inherited
 #   those vars and then printed the parent's figlet/banner (merge name/version). Clear foreign seal
@@ -436,6 +440,13 @@ script_self_update_check_throttled() {
     script_self_update_install_trap
   fi
   return 0
+}
+
+# Ignore the DEBUG throttle and check the live path now (e.g. after finishing a merge group).
+# Same [R]/[C]/[Q] prompt as the trap when the on-disk script changed.
+script_self_update_check_now() {
+  SCRIPT_SELF_UPDATE_LAST_CHECK_EPOCH=0
+  script_self_update_check_throttled
 }
 
 # DEBUG runs before the next simple command. Put the caller's captures back

@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261117.141000 - after Group finished: unthrottled self-update check
 # v. 20261117.140000 - delete prompts: Merged output (stays) + Input chapters (delete)
 # v. 20261117.120000 - seam times + delete prompts: print Directory: line
 # v. 20261117.102200 - seam preview defaults: 2s before + 2s after
@@ -133,6 +134,9 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -
 
+# 2026.11.17 - v. 0.15.141 - After each "Group finished", call script_self_update_check_now so a
+#   mid-run cp into /root/bin is noticed between groups (not only after the 30s DEBUG throttle,
+#   which often surfaced only on Quit). Periodic DEBUG watch remains as backup.
 # 2026.11.17 - v. 0.15.140 - Delete-input prompts list Merged output (stays): and Input
 #   chapters (delete): so the concat result is named next to the files about to be removed.
 # 2026.11.17 - v. 0.15.139 - Seam-times summary and delete-input prompts print a Directory:
@@ -8816,6 +8820,11 @@ run_merge_group() {
     fi
     pgm_note_processed_group "$output_file" "${files[@]}"
     echo "$(pgm_ts) Group finished: ${output_file}"
+    # Notice a mid-run install of this script before the next group menu (30s DEBUG throttle
+    # alone often delayed the [R]/[C]/[Q] prompt until Quit / teardown).
+    if declare -F script_self_update_check_now >/dev/null 2>&1; then
+      script_self_update_check_now
+    fi
     rc=0
   else
     merge_clear_temp_work
