@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261117.181200 - existing-output menu: already-encoded framing; names on [m]/[n]
 # v. 20261117.165300 - timestamps UX: not file naming; quiet apply when already chosen
 # v. 20261117.165000 - "Output dates" → "Output file dates" (timestamps on the encode)
 # v. 20261117.161600 - existing-output prompt: drop "This file was not encoded"
@@ -99,6 +100,8 @@
 # 2026.10.20 - v. 0.47 - after encode, if the source file name, filesystem time, and media CreateDate disagree, ask which to use (1/2/3…); default is the oldest usable date; stamps before 1990 are ignored; -y applies the oldest without asking
 # 2026.10.20 - v. 0.46 - Pick files: dialog has All and None buttons that reset every mark; the plain menu says A=all and N=none (those keys were already there)
 # 2026.10.14 - v. 0.45 - the output name is stem_xN.mp4; a later encode that would use the same name gets the start time in the name
+# 2026.11.17 - v. 0.76 - Existing output: "Already encoded"; ask whether to process again;
+#   put the aside / new-take basenames in parentheses on [m] and [n] (not above the menu).
 # 2026.11.17 - v. 0.75 - Timestamp step is not about output names: menu says "Date from
 #   file name"; banners say "Timestamps on encoded file"; skip the framed header when
 #   the choice was already made upfront (just apply).
@@ -531,7 +534,7 @@ tl_existing_note() {
   local dest="$1" bytes="" when=""
   bytes="$(stat -c %s -- "$dest" 2>/dev/null || true)"
   when="$(date -d "@$(stat -c %Y -- "$dest" 2>/dev/null || echo 0)" '+%Y.%m.%d %H:%M' 2>/dev/null || true)"
-  echo "Output already exists"
+  echo "Already encoded — this output is already here:"
   echo "  Directory: $(tl_abs_dir "$dest")"
   echo "  ${dest##*/}"
   if [[ -n "$bytes" && -n "$when" ]]; then
@@ -2506,14 +2509,12 @@ tl_prompt_existing_output() {
   aside="$(tl_aside_name "$dest")"
   next="$(tl_next_take_name "$dest")"
   echo
-  echo "What to do with the existing file?"
-  echo "  [m] would rename it to: ${aside##*/}"
-  echo "  [n] would write to:     ${next##*/}"
+  echo "Process this source again?"
   tl_arrow_menu k \
-    "k|Keep it and skip" \
-    "r|Replace it with this encode" \
-    "m|Rename it, then encode to the usual name" \
-    "n|Leave it, and write this encode under a new name" \
+    "k|No — keep this file, skip encode" \
+    "r|Yes — replace it (overwrite with a new encode)" \
+    "m|Yes — move old aside (${aside##*/}), encode to the usual name" \
+    "n|Yes — keep old, write new as (${next##*/})" \
     "q|Quit"
   choice="$(tl_choice "$REPLY")"
   case "$choice" in
