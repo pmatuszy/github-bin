@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261117.154200 - per-file banner: Directory: + basename Source/Output/Done
 # v. 20261117.150900 - before-files prompt: "How to encode" one go / one by one
 # v. 20261116.181500 - date menu: always name/fs/media/oldest/keep for the rest of this run
 # v. 20261116.163200 - video pick menus: drop dialog; always use Up/Down arrow menus
@@ -94,6 +95,8 @@
 # 2026.10.20 - v. 0.47 - after encode, if the source file name, filesystem time, and media CreateDate disagree, ask which to use (1/2/3…); default is the oldest usable date; stamps before 1990 are ignored; -y applies the oldest without asking
 # 2026.10.20 - v. 0.46 - Pick files: dialog has All and None buttons that reset every mark; the plain menu says A=all and N=none (those keys were already there)
 # 2026.10.14 - v. 0.45 - the output name is stem_xN.mp4; a later encode that would use the same name gets the start time in the name
+# 2026.11.17 - v. 0.71 - Per-file encode banner prints Directory: (absolute) once; Source /
+#   Output / Done / skip lines use basenames (same cue as merge delete prompts).
 # 2026.11.17 - v. 0.70 - Before encoding several files: "How to encode the N files?" with
 #   All in one go / One by one (not "Encode these files?" — that sounded like a second file pick).
 # 2026.10.14 - v. 0.44 - before the first file, ask whether to encode every file, or the first file and then ask again
@@ -500,12 +503,24 @@ tl_human_size() {
   }'
 }
 
+# Absolute directory for a file path (bare name → cwd).
+tl_abs_dir() {
+  local f="${1:-}" d
+  if [[ -z "$f" || "$f" != */* ]]; then
+    pwd -P 2>/dev/null || pwd
+    return 0
+  fi
+  d="$(dirname -- "$f")"
+  (cd -- "$d" && pwd -P) 2>/dev/null || printf '%s\n' "$d"
+}
+
 tl_existing_note() {
   local dest="$1" bytes="" when=""
   bytes="$(stat -c %s -- "$dest" 2>/dev/null || true)"
   when="$(date -d "@$(stat -c %Y -- "$dest" 2>/dev/null || echo 0)" '+%Y.%m.%d %H:%M' 2>/dev/null || true)"
   echo "Output already exists"
-  echo "  ${dest}"
+  echo "  Directory: $(tl_abs_dir "$dest")"
+  echo "  ${dest##*/}"
   if [[ -n "$bytes" && -n "$when" ]]; then
     echo "  $(tl_human_size "$bytes"), written ${when}"
   fi
@@ -1263,7 +1278,8 @@ tl_print_output_dates_header() {
   local f="$1"
   echo
   tl_rule
-  echo "$(tl_ts) Output dates: ${f}"
+  echo "$(tl_ts) Output dates: ${f##*/}"
+  echo "$(tl_ts) Directory:  $(tl_abs_dir "$f")"
   tl_rule
 }
 
@@ -1914,7 +1930,7 @@ tl_encode_one() {
   TL_ENCODE_IN_DUR=""
   TL_FILE_PROC=0
   if [[ -e "$dest" && "$redo" -eq 0 ]]; then
-    echo "$(tl_ts) Already exists, skipping: ${dest}"
+    echo "$(tl_ts) Already exists, skipping: ${dest##*/}"
     dur="$(tl_ffprobe_duration "$src" || true)"
     out_dur="$(tl_ffprobe_duration "$dest" || true)"
     tl_summary_add "$src" "$dur" "$dest" "$out_dur" "0"
@@ -1925,7 +1941,7 @@ tl_encode_one() {
   dur="$(tl_ffprobe_duration "$src" || true)"
   TL_ENCODE_IN_DUR="$dur"
   echo
-  echo "$(tl_ts) Source: ${src}"
+  echo "$(tl_ts) Source:    ${src##*/}"
   if [[ -n "$dur" ]]; then
     out_dur="$(awk -v d="$dur" -v s="$speed" 'BEGIN{printf "%.3f", d/s}')"
     echo "$(tl_ts) Duration: $(tl_format_seconds "$dur") → $(tl_format_seconds "$out_dur") at ${speed}×"
@@ -1943,7 +1959,7 @@ tl_encode_one() {
     TL_OUT_T=""
   fi
   echo "$(tl_ts) Audio: omitted"
-  echo "$(tl_ts) Output: ${dest}"
+  echo "$(tl_ts) Output:    ${dest##*/}"
   echo "$(tl_ts) Picture: $(tl_picture_summary)"
   src_codec="$(tl_source_video_codec "$src")"
   if [[ -n "$src_codec" ]]; then
@@ -1979,7 +1995,7 @@ tl_encode_one() {
     fi
     echo "$(tl_ts) Output encoder: ${label}"
     if tl_run_ffmpeg "$src" "$dest" "$speed" "$out_dur"; then
-      echo "$(tl_ts) Done: ${dest}"
+      echo "$(tl_ts) Done: ${dest##*/}"
       TL_JUST_ENCODED=1
       tl_summary_add "$src" "$dur" "$dest" "$out_dur" "${TL_FILE_PROC:-0}" "$where"
       TL_ENCODE_RECORDED=1
@@ -1988,7 +2004,7 @@ tl_encode_one() {
     fi
     label_prev="$label"
   done
-  echo "$(tl_ts) Encode failed: ${src}" >&2
+  echo "$(tl_ts) Encode failed: ${src##*/}" >&2
   tl_summary_add "$src" "$dur" "" "" "${TL_FILE_PROC:-0}"
   TL_ENCODE_RECORDED=1
   TL_ENCODE_OPEN=0
@@ -2488,27 +2504,27 @@ tl_prompt_existing_output() {
   choice="$(tl_choice "$REPLY")"
   case "$choice" in
     k)
-      echo "$(tl_ts) Kept existing file: ${dest}"
+      echo "$(tl_ts) Kept existing file: ${dest##*/}"
       REPLY=skip
       TL_SKIP_EXPLAINED=1
       ;;
     r)
-      echo "$(tl_ts) Replacing ${dest}"
+      echo "$(tl_ts) Replacing ${dest##*/}"
       REPLY=redo
       ;;
     m)
       if ! mv -n -- "$dest" "$aside"; then
-        echo "$(tl_ts) Could not rename ${dest}. Skipping." >&2
+        echo "$(tl_ts) Could not rename ${dest##*/}. Skipping." >&2
         REPLY=skip
         TL_SKIP_EXPLAINED=1
         return 0
       fi
-      echo "$(tl_ts) Renamed the old file to ${aside}"
+      echo "$(tl_ts) Renamed the old file to ${aside##*/}"
       REPLY=encode
       ;;
     n)
       TL_DEST_OVERRIDE="$next"
-      echo "$(tl_ts) New file: ${next}"
+      echo "$(tl_ts) New file: ${next##*/}"
       REPLY=encode
       ;;
     q)
@@ -4052,6 +4068,7 @@ for tl_src in "${TL_INPUTS[@]}"; do
   echo
   TL_FILE_LABEL="file ${tl_i} of ${tl_total}"
   echo "=== ${TL_FILE_LABEL}  $(basename -- "$tl_src") ==="
+  echo "$(tl_ts) Directory: $(tl_abs_dir "$tl_src")"
   tl_prompt_file_action "$tl_i" "$tl_total" "$tl_dest"
   case "$REPLY" in
     encode)
