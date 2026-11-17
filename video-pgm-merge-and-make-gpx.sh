@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261117.140000 - delete prompts: Merged output (stays) + Input chapters (delete)
 # v. 20261117.120000 - seam times + delete prompts: print Directory: line
 # v. 20261117.102200 - seam preview defaults: 2s before + 2s after
 # v. 20261117.101500 - seam preview defaults: 1.5s before + 1.5s after
@@ -132,6 +133,8 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -
 
+# 2026.11.17 - v. 0.15.140 - Delete-input prompts list Merged output (stays): and Input
+#   chapters (delete): so the concat result is named next to the files about to be removed.
 # 2026.11.17 - v. 0.15.139 - Seam-times summary and delete-input prompts print a Directory:
 #   line (absolute path via merge_inputs_dir) above the basename list — same cue as
 #   media-pgm-fix-dates / camera-metadata Processing banners.
@@ -8084,6 +8087,23 @@ print_merge_size_summary() {
   echo
 }
 
+# Directory + Merged output (stays) + Input chapters (delete) listing for delete prompts.
+pgm_print_delete_inputs_listing() {
+  local output_file="${1:-}"
+  shift
+  local -a files=("$@")
+  local f
+  printf '  Directory: %s\n' "$(merge_inputs_dir "${output_file:-${files[0]:-}}")"
+  if [[ -n "$output_file" ]]; then
+    echo "  Merged output (stays):"
+    printf '    %s\n' "${output_file##*/}"
+  fi
+  echo "  Input chapters (delete):"
+  for f in "${files[@]}"; do
+    printf '    %s\n' "${f##*/}"
+  done
+}
+
 # $1 = after_merge|already_merged, $2 = merged output path, remaining = input chapters.
 prompt_delete_merged_inputs() {
   local context="${1:-after_merge}"
@@ -8106,10 +8126,7 @@ prompt_delete_merged_inputs() {
   else
     pgm_print_question "Delete the ${#files[@]} merged input chapter file(s)?"
   fi
-  printf '  Directory: %s\n' "$(merge_inputs_dir "${files[0]}")"
-  for f in "${files[@]}"; do
-    printf '    %s\n' "${f##*/}"
-  done
+  pgm_print_delete_inputs_listing "$output_file" "${files[@]}"
   echo "  Choosing yes asks once more before anything is deleted."
   echo
   pgm_print_question "Delete merged input chapter file(s)?"
@@ -8121,7 +8138,7 @@ prompt_delete_merged_inputs() {
   choice="$REPLY"
   case "$choice" in
     y)
-      prompt_confirm_delete_inputs "${files[@]}"
+      prompt_confirm_delete_inputs "$output_file" "${files[@]}"
       case $? in
         0) ;;
         2) return 2 ;;
@@ -8154,16 +8171,15 @@ prompt_delete_merged_inputs() {
 }
 
 # Second question before input files are removed. Default is Yes (caller already chose delete).
-# Return 2 to quit.
+# $1 = merged output path, remaining = input chapters. Return 2 to quit.
 prompt_confirm_delete_inputs() {
+  local output_file="${1:-}"
+  shift
   local -a files=("$@")
   local f choice
   echo
-  pgm_print_question "Delete these ${#files[@]} input file(s)? The merged file stays. This cannot be undone."
-  printf '  Directory: %s\n' "$(merge_inputs_dir "${files[0]}")"
-  for f in "${files[@]}"; do
-    printf '    %s\n' "${f##*/}"
-  done
+  pgm_print_question "Delete these ${#files[@]} input file(s)? This cannot be undone."
+  pgm_print_delete_inputs_listing "$output_file" "${files[@]}"
   pgm_arrow_menu y \
     "y|Yes — delete these input files" \
     "n|No — keep input files" \
