@@ -1,7 +1,9 @@
 #!/bin/bash
+# v. 20261117.091500 - call apcaccess via /bin/env (not /usr/bin/env)
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
+# 2026.11.17 - v. 0.5 - invoke apcaccess with /bin/env (house style; avoid PATH/function env).
 # 2026.06.02 - v. 0.4 - add -h/--help, -v/--version, --no_startup_delay (parsed before header)
 # 2023.11.05 - v. 0.3 - added check whether apcupsd package is installed
 # 2023.01.16 - v. 0.2 - added random delay when script runs non-interactively
@@ -48,11 +50,11 @@ fi
 check_if_installed apcupsd
 
 # spr. czy nie ma bledow
-if [ $(/usr/bin/env apcaccess | egrep "STATUS   : ONLINE *$"|wc -l) -eq 0 ];then
-  m=$( echo "${SCRIPT_VERSION}";echo ;/usr/bin/env apcaccess 2>&1)
+if [ $(/bin/env apcaccess | egrep "STATUS   : ONLINE *$"|wc -l) -eq 0 ];then
+  m=$( echo "${SCRIPT_VERSION}";echo ;/bin/env apcaccess 2>&1)
   /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
 else
-  m=$(echo "${SCRIPT_VERSION}";echo ; /usr/bin/env apcaccess 2>&1| egrep "STATUS   : ONLINE *")
+  m=$(echo "${SCRIPT_VERSION}";echo ; /bin/env apcaccess 2>&1| egrep "STATUS   : ONLINE *")
   /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
 fi
 

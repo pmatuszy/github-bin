@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
+# v. 20261117.091500 - run_exiftool: always /bin/env (never bare env)
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.091802 - install/reinstall prompts: show [q] quit in [y/N/q] and [Y/n/q]
 
+# 2026.11.17 - v. 1.10 - run_exiftool always uses /bin/env (PGM interactive shells define an
+#   env function; do not probe type -t / fall back to bare env).
 # 2026.08.05 - v. 1.9 - install/reinstall/update prompts: print [q] quit option; handle q/Q explicitly
 # 2026.07.16 - v. 1.8 - add -h/--help, -v/--version, --no_startup_delay
 # 2026.07.15 - v. 1.8 - run_exiftool: use env unless it is a bash function (then /bin/env)
@@ -138,13 +141,10 @@ EOF
 }
 
 run_exiftool() {
-    local lc env_cmd=env
+    local lc
     lc="$(exiftool_pick_locale)"
-    # Some interactive shells define a bash function named env; use /bin/env then.
-    if [[ "$(type -t env 2>/dev/null || true)" == function ]]; then
-        env_cmd=/bin/env
-    fi
-    "$env_cmd" LC_ALL="$lc" LANG="$lc" LANGUAGE= "$@"
+    # Always /bin/env — interactive PGM shells define a bash function named env.
+    /bin/env LC_ALL="$lc" LANG="$lc" LANGUAGE= "$@"
 }
 
 as_root_check() {

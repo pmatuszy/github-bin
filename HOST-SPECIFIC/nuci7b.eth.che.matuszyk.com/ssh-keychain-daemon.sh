@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261117.091500 - remote ssh: call /bin/env (not bare env; PGM env function)
 # v. 20260921.114432 - remote cycle every 10 min again (SSH_KEYCHAIN_DAEMON_SLEEP default 600)
 # v. 20260916.115600 - drop red/yellow coloring; only OK lines are green, problems use plain text
 # v. 20260916.114700 - unreachable hosts: red banner, consecutive-failure count, boxed cycle summary
@@ -12,6 +13,8 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260718.082000 - English password prompt; track script in github-bin
 
+# 2026.11.17 - v. 1.2 - remote ssh wrappers use /bin/env -u … (bare env hits the PGM shell
+#   function and never launches ssh).
 # 2026.09.21 - v. 1.1 - remote cycle sleep default 600s (10 min) again; was 3600s / 1h
 # 2026.07.18 - v. 1.0 - add to repo; translate Wpisz haslo -> Enter password
 # 2026.05.26 - user-facing messages translated from Polish to English
@@ -158,13 +161,13 @@ skd_read_host_list() {
 
 # Pass 1: no secret leaves this machine. ssh-keychain.sh exits non-zero when not all
 # keys are loaded there, which is our signal that the host was restarted.
-# env -u: our SSH_ASKPASS helper prints the key passphrase, so ssh must never be
+# /bin/env -u: our SSH_ASKPASS helper prints the key passphrase, so ssh must never be
 # able to use it to answer a remote password prompt. BatchMode=yes on top of that.
 skd_remote_check() {
   local host="$1"
 
   timeout --kill-after=10 "${REMOTE_TIMEOUT}" \
-    env -u SSH_ASKPASS -u SSH_ASKPASS_REQUIRE -u DISPLAY -u PASSWD \
+    /bin/env -u SSH_ASKPASS -u SSH_ASKPASS_REQUIRE -u DISPLAY -u PASSWD \
       ssh -n -T -o BatchMode=yes -o ConnectTimeout="${CONNECT_TIMEOUT}" \
              -o ServerAliveInterval=10 -o ServerAliveCountMax=3 \
              "${host}" "${REMOTE_CMD}" 2>&1 | sed "s/^/    [${host}] /"
@@ -201,7 +204,7 @@ skd_remote_load_keys() {
 
   skd_remote_bootstrap_script \
     | timeout --kill-after=10 "${REMOTE_TIMEOUT}" \
-        env -u SSH_ASKPASS -u SSH_ASKPASS_REQUIRE -u DISPLAY -u PASSWD \
+        /bin/env -u SSH_ASKPASS -u SSH_ASKPASS_REQUIRE -u DISPLAY -u PASSWD \
           ssh -T -o BatchMode=yes -o ConnectTimeout="${CONNECT_TIMEOUT}" \
                  -o ServerAliveInterval=10 -o ServerAliveCountMax=3 \
                  "${host}" 'bash -s' 2>&1 | sed "s/^/    [${host}] /"
