@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261117.083000 - group merge default: Preview joins (then Merge after a preview)
 # v. 20261117.082000 - fix CreateDate batch: literal tab in exiftool -p ( ${tab} was "-")
 # v. 20261117.073100 - Contour link parse also for suspect chains / gap labels
 # v. 20261117.073000 - force/Contour merge: extend concat_parts range (don't reuse input name)
@@ -125,6 +126,8 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -
 
+# 2026.11.17 - v. 0.15.133 - Normal group merge prompt defaults to [1] Preview joins (same as
+#   Contour suspect / remux); after a preview, default becomes [Y] Merge / remux.
 # 2026.11.17 - v. 0.15.132 - CreateDate batch used exiftool -p '${tab}', which this exiftool
 #   prints as "-" (unknown tag) under -f; lines had no real tabs so every CreateDate was
 #   dropped and hybrid start always used the filename. Contour names are often ~end times
@@ -472,8 +475,9 @@ Merge behaviour:
     The merged file and that .gpx get the first chapter's creation time and file time.
     If the merged file has no location, the first point of that .gpx is stored in it.
   - Shows each multi-part group (with file sizes) and asks whether to merge
-    (single-key Y/N/A/M/E/1/Q, no Enter — like rename.sh). [Y] merges this group
-    (default); [m] merges all remaining groups (asks output date/time for each first).
+    (single-key Y/N/A/M/E/1/Q, no Enter — like rename.sh). [1] Preview joins is
+    the default; after a preview, [Y] Merge (or remux) becomes the default.
+    [m] merges all remaining groups (asks output date/time for each first).
     [1] previews each join: ffmpeg stitches last 2s of clip N + first 2s of N+1
     into one .pgm_join_preview_NN_DELETE_ME.mp4 beside the inputs, plays that
     single clip, then deletes it when you continue (kept for repeat). Leftove
@@ -481,7 +485,7 @@ Merge behaviour:
     [e]
     (groups with 3+ files) edits the suggestion: keep a subset by numbe
     (e.g. 1-2) or drop the last file, then asks again for the trimmed group.
-    Contour suspect review offers [1] Preview joins first (default until previewed), then merge.
+    Contour suspect review also defaults to [1] Preview joins until previewed.
     Files in a group, and the groups themselves, are ordered oldest to newest
     (filename YYYYMMDD_HHMMSS when present, otherwise filesystem mtime) before that
     prompt. After the input and output lists, a boxed summary shows how many files
@@ -9125,21 +9129,20 @@ prompt_merge_group_action() {
         esac
       done
     fi
-    local needs_norm=0 merge_def="" 
+    local needs_norm=0 merge_def=1
     local -a merge_menu=()
     [[ "${PGM_MERGE_GROUP_NEEDS_NORMALIZE:-0}" == 1 ]] && needs_norm=1
+    # Preview joins first (default until previewed); after a preview, default to merge/remux.
     if (( needs_norm )); then
       echo "$(pgm_ts) Remux candidate — preview joins before rewriting chapters."
-      merge_def=1
       merge_menu=(
         "1|Preview joins first (recommended) — last ${PGM_JOIN_PREVIEW_BEFORE:-2}s + first ${PGM_JOIN_PREVIEW_AFTER:-2}s"
         "y|Remux (video copy + AAC, unify time_base) then merge"
       )
     else
-      merge_def=y
       merge_menu=(
+        "1|Preview joins first (recommended) — last ${PGM_JOIN_PREVIEW_BEFORE:-2}s + first ${PGM_JOIN_PREVIEW_AFTER:-2}s of next"
         "y|Merge this group"
-        "1|Preview joins — last ${PGM_JOIN_PREVIEW_BEFORE:-2}s + first ${PGM_JOIN_PREVIEW_AFTER:-2}s of next"
       )
     fi
     merge_menu+=( "n|Skip this group" )
@@ -9151,6 +9154,11 @@ prompt_merge_group_action() {
       "m|Merge all remaining groups (asks output date/time for each first)"
       "q|Quit"
     )
+    if [[ "${PGM_MERGE_GROUP_JOIN_PREVIEWED:-0}" == 1 ]]; then
+      merge_def=y
+    else
+      merge_def=1
+    fi
     echo
     if (( short_n )); then
       pgm_print_question "Short clip in this group. Merge anyway?"
