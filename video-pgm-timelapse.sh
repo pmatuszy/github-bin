@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261117.150900 - before-files prompt: "How to encode" one go / one by one
 # v. 20261116.181500 - date menu: always name/fs/media/oldest/keep for the rest of this run
 # v. 20261116.163200 - video pick menus: drop dialog; always use Up/Down arrow menus
 # v. 20261116.154800 - tighter arrow-menu spacing (fewer blank lines around prompts)
@@ -93,6 +94,8 @@
 # 2026.10.20 - v. 0.47 - after encode, if the source file name, filesystem time, and media CreateDate disagree, ask which to use (1/2/3…); default is the oldest usable date; stamps before 1990 are ignored; -y applies the oldest without asking
 # 2026.10.20 - v. 0.46 - Pick files: dialog has All and None buttons that reset every mark; the plain menu says A=all and N=none (those keys were already there)
 # 2026.10.14 - v. 0.45 - the output name is stem_xN.mp4; a later encode that would use the same name gets the start time in the name
+# 2026.11.17 - v. 0.70 - Before encoding several files: "How to encode the N files?" with
+#   All in one go / One by one (not "Encode these files?" — that sounded like a second file pick).
 # 2026.10.14 - v. 0.44 - before the first file, ask whether to encode every file, or the first file and then ask again
 # 2026.10.07 - v. 0.43 - encode everything is Y (default); a short try first is n
 # 2026.10.07 - v. 0.42 - when the run is interactive and inputs come from a directory, ask which videos to encode: all, FrontCam, BackCam, Map, other, or pick files; use dialog when it is installed unless --no-dialog (or --dialog to prefer it)
@@ -179,8 +182,8 @@ are skipped. An interactive run with inputs from a directory (or the current
 directory) asks which videos to encode when more than one is found: all,
 FrontCam, BackCam, Map, other, or a file-by-file pick. Named FILE arguments
 skip that question. When more than one file will be encoded, the script asks
-once before the first file: encode all of them, or encode the first and ask
-again. -y encodes every candidate without asking.
+once before the first file how to run them: all in one go, or one by one
+(encode the first, then ask again). -y encodes every candidate without asking.
 
 Options:
   -h, --help           Show this help and exit.
@@ -2520,6 +2523,7 @@ tl_prompt_existing_output() {
 }
 
 # Asked once, before any file is encoded, when more than one file is selected.
+# How to run the already-chosen list: all in one go, or one by one.
 # [A] encodes every file. [y] encodes the first, then tl_prompt_continue_after_file.
 tl_prompt_before_files() {
   local total="$1" choice=""
@@ -2529,10 +2533,10 @@ tl_prompt_before_files() {
     return 0
   fi
   echo
-  echo "Encode these files?"
+  echo "How to encode the ${total} files?"
   tl_arrow_menu a \
-    "a|Encode all ${total} files" \
-    "y|Encode the first file, then ask again" \
+    "a|All in one go" \
+    "y|One by one — encode the first, then ask again" \
     "n|Do not encode" \
     "q|Quit"
   choice="$(tl_choice "$REPLY")"
@@ -2540,11 +2544,11 @@ tl_prompt_before_files() {
     ''|a)
       ENCODE_ALL=1
       TL_ENCODE_REST=1
-      echo "$(tl_ts) Encoding all ${total} files."
+      echo "$(tl_ts) Encoding all ${total} files in one go."
       REPLY=all
       ;;
     y)
-      echo "$(tl_ts) Encoding the first file, then asking again."
+      echo "$(tl_ts) Encoding one by one (first file, then ask again)."
       REPLY=next
       ;;
     n)
@@ -2556,7 +2560,7 @@ tl_prompt_before_files() {
       REPLY=quit
       ;;
     *)
-      echo "$(tl_ts) Unknown choice: ${REPLY}. Encoding all ${total} files."
+      echo "$(tl_ts) Unknown choice: ${REPLY}. Encoding all ${total} files in one go."
       ENCODE_ALL=1
       TL_ENCODE_REST=1
       REPLY=all
