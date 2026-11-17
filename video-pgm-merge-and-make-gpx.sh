@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261117.155100 - run-settings: one blank after ffmpeg box (no double)
 # v. 20261117.145100 - chapter-plan size lines: align basename + | columns
 # v. 20261117.144500 - suspect plan: Contour review as clip + gap lines (C1)
 # v. 20261117.142800 - note processed sizes before deleting input chapters
@@ -137,6 +138,8 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -
 
+# 2026.11.17 - v. 0.15.145 - Run-settings ffmpeg box: one trailing blank only (drop the extra
+#   echo after the box that made a double gap).
 # 2026.11.17 - v. 0.15.144 - Chapter-plan per-group file size lines pad basenames to a common
 #   width and use format_bytes_human_aligned so '|' columns line up within the group.
 # 2026.11.17 - v. 0.15.143 - Chapter-plan Contour suspect headers: short "[suspect n/m] N clips →
@@ -1619,7 +1622,6 @@ pgm_print_run_settings() {
   printf '  %-21s%s\n' "Work dir:" "$PWD"
   pgm_print_run_settings_equivalent_cli
   pgm_print_ffmpeg_box
-  echo
 }
 
 # Draw lines in an ada box when boxes is installed, otherwise a plain frame.
@@ -1748,6 +1750,7 @@ pgm_print_ffmpeg_box() {
     lines=("$ver" "$(pgm_ffmpeg_gpu_encoder_line)")
   fi
   pgm_print_box_lines "${lines[@]}"
+  echo
 }
 
 pgm_time_now_ns() {

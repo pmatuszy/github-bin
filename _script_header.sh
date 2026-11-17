@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261117.155100 - tighter startup: one blank after version box; ask_colors no extra blank
 # v. 20261117.084500 - SCRIPT_HEADER_QUIET=1 skips figlet / Interactive / version box
 # v. 20261116.181000 - script_arrow_menu: Space selects like Enter
 # v. 20261116.154800 - script_arrow_menu: fewer blank lines (no gap before hint / after select)
@@ -18,6 +19,9 @@
 # v. 20260716.173600 - print_version_banner uses CALLER_SCRIPT version fields
 # v. 20260716.163300 - versioning v. YYYYMMDD.HH24MISS; parse first # v. YYYYMMDD.HHMMSS line
 
+# 2026.11.17 - v. 1.71.155100 - Startup spacing: version box content no longer ends with two
+#                        blank lines; after the banner leave one blank. script_ask_colors no longer
+#                        prints an extra leading blank (that made a double gap before Use colors?).
 # 2026.11.17 - v. 1.70.084500 - SCRIPT_HEADER_QUIET=1 (or yes/true): skip figlet, "Interactive
 #                        session…", and the boxes version dump. Still seals, sets traps, and
 #                        script_is_run_interactively. Used when merge spawns play-terminal for a
@@ -527,7 +531,7 @@ export SCRIPT_VERSION_TMP=$(
     echo "script version: unknown" ;
   fi
   echo "current date : $(date '+%Y.%m.%d %H:%M:%S')"
-  echo "script is run on $(hostname)" ; echo ; echo
+  echo "script is run on $(hostname)"
 )
 
 if type -fP boxes &>/dev/null; then
@@ -560,8 +564,10 @@ if (( $? != 0 )) ; then      # we set RANDOM_DELAY only when running NOT from te
 else
   script_is_run_interactively=1
   if (( ! _SCRIPT_HEADER_QUIET )); then
-    echo "Interactive session detected: I will NOT introduce RANDOM_DELAY...";echo
-    echo "${SCRIPT_VERSION}" ; echo
+    echo "Interactive session detected: I will NOT introduce RANDOM_DELAY..."
+    echo
+    echo "${SCRIPT_VERSION}"
+    echo
   fi
 fi
 unset _SCRIPT_HEADER_QUIET
@@ -880,7 +886,7 @@ script_ask_colors() {
   fi
   SCRIPT_USE_COLORS=1
   script_colors_init
-  echo
+  # Banner already left one blank after the version box — do not add another.
   script_print_question "Use colors in the terminal?"
   script_arrow_menu y \
     "y|Yes" \

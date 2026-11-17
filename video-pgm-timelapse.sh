@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261117.155100 - startup prompts: no double blank lines around ffmpeg / menus
 # v. 20261117.154200 - per-file banner: Directory: + basename Source/Output/Done
 # v. 20261117.150900 - before-files prompt: "How to encode" one go / one by one
 # v. 20261116.181500 - date menu: always name/fs/media/oldest/keep for the rest of this run
@@ -95,6 +96,8 @@
 # 2026.10.20 - v. 0.47 - after encode, if the source file name, filesystem time, and media CreateDate disagree, ask which to use (1/2/3…); default is the oldest usable date; stamps before 1990 are ignored; -y applies the oldest without asking
 # 2026.10.20 - v. 0.46 - Pick files: dialog has All and None buttons that reset every mark; the plain menu says A=all and N=none (those keys were already there)
 # 2026.10.14 - v. 0.45 - the output name is stem_xN.mp4; a later encode that would use the same name gets the start time in the name
+# 2026.11.17 - v. 0.72 - Drop double blank lines between startup prompts (ffmpeg box /
+#   Encode display / More choices); rely on one blank from the previous block.
 # 2026.11.17 - v. 0.71 - Per-file encode banner prints Directory: (absolute) once; Source /
 #   Output / Done / skip lines use basenames (same cue as merge delete prompts).
 # 2026.11.17 - v. 0.70 - Before encoding several files: "How to encode the N files?" with
@@ -927,6 +930,7 @@ tl_print_ffmpeg_version() {
     lines=("$ver" "$(tl_ffmpeg_gpu_encoder_line)")
   fi
   tl_print_box_lines "${lines[@]}"
+  echo
 }
 
 tl_load_encoders() {
@@ -3465,7 +3469,6 @@ tl_prompt_advanced() {
   else
     n_note=" (default)"
   fi
-  echo
   echo "More choices before encoding?"
   tl_arrow_menu "$akey" \
     "n|Usual timelapse — every Nth frame at 25 fps, keyframe every 1s" \
@@ -3499,7 +3502,6 @@ tl_prompt_display() {
     dkey=n
     [[ -n "$TL_DISPLAY" ]] || TL_DISPLAY=normal
   fi
-  echo
   echo "Encode display?"
   tl_arrow_menu "$dkey" \
     "n|Normal — progress bar" \
