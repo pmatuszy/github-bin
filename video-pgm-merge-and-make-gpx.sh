@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261117.073000 - force/Contour merge: extend concat_parts range (don't reuse input name)
 # v. 20261116.225500 - Contour suspect defaults to Preview joins; delete confirm defaults Yes
 # v. 20261116.224800 - no blank line between question/prompt and arrow menu
 # v. 20261116.224500 - tighter blanks: one after merge box; none after question / Planned / Sources
@@ -122,6 +123,9 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -
 
+# 2026.11.17 - v. 0.15.131 - Forced merge of an existing *_concat_parts_* plus more chapters
+#   names a new file (extend 01-02 + one chapter → 01-03), not the same path as the first input.
+#   Contour *_Contour_concat_parts_* outputs can chain with following Contour chapters.
 # 2026.11.16 - v. 0.15.130 - Contour suspect default is [1] Preview joins (then [m] after a
 #   preview). Delete-input prompts default Yes once the user already chose delete.
 # 2026.11.16 - v. 0.15.129 - Contour suspect choice is closed (no fall-through into the normal
@@ -364,8 +368,9 @@ Chapter detection is skipped. The plan prints every filename that will be joined
 The usual prompts still ask about the merge, temp directory, seam preview,
 and deleting inputs. A Windows path such as P:\\video\\clip.mp4 is read as
 /mnt/p/video/clip.mp4. All files must be MP4s in the same directory. The
-output is written next to the first file as <first_stem>_concat_parts_01-<N>.mp4
-(or a combined chapter range when every input is already a …_concat_parts_A-B).
+output is written next to the first file as <first_stem>_concat_parts_AA-BB.mp4
+(extending an existing …_01-02 plus another chapter to …_01-03; combining
+contiguous concat ranges when every input is already a …_concat_parts_A-B).
 
 Options:
   -h, --help           Show this help and exit.
@@ -427,10 +432,13 @@ Merge behaviour:
     Contour stop slack: next start from 30s early to 12s after the previous end
     (confident). Gaps of 13–45s are Contour *suspect* review candidates (default
     Preview joins). A shorter clip does not chain into one at least twice as long (short
-    must not lead a much longer chapter). Merge INPUT lines show the gap to the
-    next file on the same line. Contour groups merge with ffmpeg concat (-c copy),
-    not mp4_merge. If picture matches but audio/time_base differ, offer remux
-    (video copy + AAC + unified time_base) then concat. Output:
+    must not lead a much longer chapter). Existing Contour half-merges
+    (…_Contour_concat_parts_AA-BB.mp4) can chain with later Contour chapters; the
+    new output extends the part range (01-02 + next → 01-03) instead of replacing
+    the half-merge. Merge INPUT lines show the gap to the next file on the same
+    line. Contour groups merge with ffmpeg concat (-c copy), not mp4_merge. If
+    picture matches but audio/time_base differ, offer remux (video copy + AAC +
+    unified time_base) then concat. Output:
     YYYYMMDD_HHMMSS_Contour_concat_parts_01-NN.mp4.
   - Also groups 70mai-style clips NOYYYYMMDD-HHMMSS-NNNNNNX.MP4 and the same
     name starting with EV (same camera letter) into a continuous journey: ordered
@@ -5516,11 +5524,36 @@ contour_basename_parse() {
   return 1
 }
 
+# Contour chapter OR Contour merge output (…_Contour_concat_parts_AA-BB.mp4).
+# Sets CONTOUR_TS_DATE / CONTOUR_TS_TIME like contour_basename_parse.
+contour_link_basename_parse() {
+  local base="$1"
+  CONTOUR_TS_DATE=""
+  CONTOUR_TS_TIME=""
+  [[ -n "$base" ]] || return 1
+  if contour_basename_parse "$base"; then
+    return 0
+  fi
+  if [[ "$base" =~ ^([0-9]{8})_([0-9]{6})_Contour_concat_parts_[0-9]{2}-[0-9]{2}(_Proxy)?\.[mM][pP]4$ ]]; then
+    CONTOUR_TS_DATE="${BASH_REMATCH[1]}"
+    CONTOUR_TS_TIME="${BASH_REMATCH[2]}"
+    return 0
+  fi
+  return 1
+}
+
+# True for Contour merge outputs that may chain with later Contour chapters.
+is_contour_concat_output_basename() {
+  local base="$1"
+  [[ "$base" =~ ^[0-9]{8}_[0-9]{6}_Contour_concat_parts_[0-9]{2}-[0-9]{2}(_Proxy)?\.[mM][pP]4$ ]]
+}
+
 # Any Contour-parseable clip large enough to be a real video (≥ PGM_CONTOUR_MIN_BYTES).
 # Size band is not used — Contour chapters often differ a lot (raw vs re-encode).
+# Contour *_Contour_concat_parts_* outputs are eligible so a half-merge can continue.
 is_contour_chainable_segment() {
   local f="$1" sz dur min_b
-  contour_basename_parse "${f##*/}" || return 1
+  contour_link_basename_parse "${f##*/}" || return 1
   min_b="${PGM_CONTOUR_MIN_BYTES:-10485760}"
   [[ "$min_b" =~ ^[0-9]+$ ]] || min_b=10485760
   sz=$(file_size_bytes "$f")
@@ -5546,9 +5579,9 @@ contour_chapter_time_delta() {
   CONTOUR_LINK_DELTA=""
   prev_base="${prev_f##*/}"
   next_base="${next_f##*/}"
-  contour_basename_parse "$prev_base" || return 1
+  contour_link_basename_parse "$prev_base" || return 1
   prev_day="$CONTOUR_TS_DATE"
-  contour_basename_parse "$next_base" || return 1
+  contour_link_basename_parse "$next_base" || return 1
   [[ "$CONTOUR_TS_DATE" == "$prev_day" ]] || return 1
 
   prev_epoch="$(pgm_hybrid_start_epoch "$prev_f" 2>/dev/null)" || return 1
@@ -5687,13 +5720,15 @@ contour_suspect_gap_note() {
 
 contour_group_output_file() {
   local -a files=("$@")
-  local fb date1 t1 n
+  local fb date1 t1 dir out
   fb="${files[0]##*/}"
-  contour_basename_parse "$fb" || return 1
+  contour_link_basename_parse "$fb" || return 1
   date1="$CONTOUR_TS_DATE" t1="$CONTOUR_TS_TIME"
-  n=${#files[@]}
-  (( n >= 1 )) || return 1
-  printf '%s_%s_Contour_concat_parts_01-%02d.mp4\n' "$date1" "$t1" "$n"
+  (( ${#files[@]} >= 1 )) || return 1
+  dir="$(dirname -- "${files[0]}")"
+  # Extend an existing Contour concat_parts range when inputs already include one.
+  out="$(pgm_merge_concat_parts_output_path "$dir" "${date1}_${t1}_Contour" "" "${files[@]}")" || return 1
+  printf '%s\n' "$out"
 }
 
 # Contour (HandBrake HEVC+MP3 / NVenc) must not use gyroflow mp4_merge — it corrupts
@@ -5704,7 +5739,7 @@ group_prefers_ffmpeg_concat() {
   local f
   (( ${#files[@]} >= 2 )) || return 1
   for f in "${files[@]}"; do
-    contour_basename_parse "${f##*/}" || return 1
+    contour_link_basename_parse "${f##*/}" || return 1
   done
   return 0
 }
@@ -5760,7 +5795,7 @@ build_contour_size_split_groups() {
       continue
     fi
     base="${files[0]##*/}"
-    if ! contour_basename_parse "$base"; then
+    if ! contour_link_basename_parse "$base"; then
       kept+=("$blob")
       continue
     fi
@@ -5802,7 +5837,7 @@ build_contour_size_split_groups() {
         pgm_progress_update "Contour chain" "$((i + 1))" "$n" "$f"
         last_prog=$i
       fi
-      contour_basename_parse "$base" || break
+      contour_link_basename_parse "$base" || break
       if ! contour_chapter_timestamps_follow "${run[-1]}" "$f"; then
         break
       fi
@@ -5845,7 +5880,7 @@ build_contour_suspect_groups() {
       continue
     fi
     base="${files[0]##*/}"
-    contour_basename_parse "$base" || continue
+    contour_link_basename_parse "$base" || continue
     pool+=("${files[0]}")
   done
 
@@ -7480,7 +7515,10 @@ build_chapter_groups() {
   CONTOUR_SUSPECT_NOTES=()
   for f in "${sorted[@]}"; do
     base="${f##*/}"
-    is_concat_output_basename "$base" && continue
+    if is_concat_output_basename "$base"; then
+      # Contour half-merges can still chain with later Contour chapters.
+      is_contour_concat_output_basename "$base" || continue
+    fi
     preload+=( "$f" )
   done
   pgm_hybrid_preload_files "${preload[@]}"
@@ -7489,11 +7527,12 @@ build_chapter_groups() {
   build_raw_gopro_groups rest1 "${sorted[@]}"
   # 2) already-renamed _part_NN chapters -> key-based groups (originals vs proxies kept apart)
   build_part_chapter_groups rest2 "${rest1[@]}"
-  # 3) everything else becomes a single-file blob; letter chapters then size-splits
+  # 3) everything else becomes a single-file blob; letter chapters then size-splits.
+  #    Contour *_Contour_concat_parts_* stay in the pool so they can chain onward.
   for f in "${rest2[@]}"; do
     base="${f##*/}"
     if is_concat_output_basename "$base"; then
-      continue
+      is_contour_concat_output_basename "$base" || continue
     fi
     GROUP_BLOBS+=("$f")
   done
@@ -7834,59 +7873,106 @@ force_merge_strip_concat_stem() {
   printf '%s\n' "$stem"
 }
 
-# Forced CLI merge: keep command-line order; write next to the first file.
-# When every input is a …_concat_parts_A-B (or legacy parts_A-B_concat), name the
-# output with the first file's camera stem and the combined chapter range
-# (01-05 + 06-09 → …_concat_parts_01-09). Otherwise strip any concat suffix from
-# the first stem and use 01-<N> for the number of input files.
-force_merge_group_output_file() {
+# True when path refers to the same file as one of the inputs (by basename in dir, or realpath).
+pgm_path_is_among_inputs() {
+  local path="$1"
+  shift
+  local f path_r f_r
+  path_r="$(realpath -m -- "$path" 2>/dev/null || printf '%s' "$path")"
+  for f in "$@"; do
+    if [[ "${f##*/}" == "${path##*/}" ]]; then
+      local fd pd
+      fd="$(dirname -- "$f")"
+      pd="$(dirname -- "$path")"
+      if [[ "$fd" == "$pd" || "$fd" == . && "$pd" == . ]]; then
+        return 0
+      fi
+    fi
+    f_r="$(realpath -m -- "$f" 2>/dev/null || printf '%s' "$f")"
+    [[ "$f_r" == "$path_r" ]] && return 0
+  done
+  return 1
+}
+
+# Build …_concat_parts_AA-BB path from inputs. Extends an existing range when some
+# inputs are already concat outputs (01-02 + one chapter → 01-03). Never returns a
+# path that is one of the inputs — bumps BB until unique.
+# $1=dir  $2=preferred_stem (may be empty → from first input)  $3=proxy  rest=files
+pgm_merge_concat_parts_output_path() {
+  local dir="$1" preferred_stem="$2" proxy="$3"
+  shift 3
   local -a files=("$@")
-  local base stem dir n f first=0 last=0 min_p="" max_p="" proxy="" all_concat=1 out
-  (( ${#files[@]} >= 2 )) || return 1
-  base="${files[0]##*/}"
-  dir="$(dirname -- "${files[0]}")"
-  n=${#files[@]}
+  local f base stem="" min_p="" max_p="" first last parts out path
+  (( ${#files[@]} >= 1 )) || return 1
 
   for f in "${files[@]}"; do
-    if concat_parse_cam_part_range "${f##*/}"; then
+    base="${f##*/}"
+    if concat_parse_cam_part_range "$base"; then
       first=$CONCAT_PARSE_FIRST
       last=$CONCAT_PARSE_LAST
-      if [[ -z "$min_p" ]] || (( first < min_p )); then
+      parts=$(( last - first + 1 ))
+      (( parts >= 1 )) || parts=1
+      if [[ -z "$stem" ]]; then
+        stem="${CONCAT_PARSE_STEM:-}"
+        [[ -n "$stem" ]] || stem="$(force_merge_strip_concat_stem "${base%.*}")"
+        [[ -n "$proxy" ]] || proxy="${CONCAT_PARSE_PROXY:-}"
         min_p=$first
-      fi
-      if [[ -z "$max_p" ]] || (( last > max_p )); then
         max_p=$last
-      fi
-      if [[ -z "$proxy" && -n "${CONCAT_PARSE_PROXY:-}" ]]; then
-        proxy="$CONCAT_PARSE_PROXY"
+      else
+        if (( first == max_p + 1 )); then
+          max_p=$last
+        else
+          max_p=$(( max_p + parts ))
+        fi
+        if [[ -z "$proxy" && -n "${CONCAT_PARSE_PROXY:-}" ]]; then
+          proxy="$CONCAT_PARSE_PROXY"
+        fi
       fi
     else
-      all_concat=0
-      break
+      if [[ -z "$stem" ]]; then
+        if [[ -n "$preferred_stem" ]]; then
+          stem="$preferred_stem"
+        else
+          stem="$(force_merge_strip_concat_stem "${base%.*}")"
+        fi
+        min_p=1
+        max_p=1
+      else
+        max_p=$(( max_p + 1 ))
+      fi
     fi
   done
 
-  if (( all_concat )) && [[ -n "$min_p" && -n "$max_p" ]]; then
-    concat_parse_cam_part_range "$base" || true
-    stem="${CONCAT_PARSE_STEM:-}"
-    [[ -n "$stem" ]] || stem="$(force_merge_strip_concat_stem "${base%.*}")"
-    [[ -n "$proxy" ]] || proxy="${CONCAT_PARSE_PROXY:-}"
+  [[ -n "$stem" && -n "$min_p" && -n "$max_p" ]] || return 1
+  if [[ -n "$preferred_stem" ]]; then
+    stem="$preferred_stem"
+  fi
+
+  while true; do
     out=$(printf '%s_concat_parts_%02d-%02d%s.mp4' "$stem" "$min_p" "$max_p" "$proxy")
-  else
-    proxy=""
-    if concat_parse_cam_part_range "$base"; then
-      stem="$CONCAT_PARSE_STEM"
-      proxy="${CONCAT_PARSE_PROXY:-}"
+    if [[ "$dir" == . ]]; then
+      path="$out"
     else
-      stem="$(force_merge_strip_concat_stem "${base%.*}")"
+      path="${dir}/${out}"
     fi
-    out=$(printf '%s_concat_parts_01-%02d%s.mp4' "$stem" "$n" "$proxy")
-  fi
-  if [[ "$dir" == . ]]; then
-    printf '%s\n' "$out"
-  else
-    printf '%s/%s\n' "$dir" "$out"
-  fi
+    if pgm_path_is_among_inputs "$path" "${files[@]}"; then
+      max_p=$(( max_p + 1 ))
+      continue
+    fi
+    printf '%s\n' "$path"
+    return 0
+  done
+}
+
+# Forced CLI merge: keep command-line order; write next to the first file.
+# Concat inputs extend the chapter range (01-02 + chapter → 01-03). All-concat
+# ranges combine when contiguous (01-05 + 06-09 → 01-09). Never overwrites an input.
+force_merge_group_output_file() {
+  local -a files=("$@")
+  local dir
+  (( ${#files[@]} >= 2 )) || return 1
+  dir="$(dirname -- "${files[0]}")"
+  pgm_merge_concat_parts_output_path "$dir" "" "" "${files[@]}"
 }
 
 group_output_file() {
