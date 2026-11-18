@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261118.081600 - MP3-audio chapters (HandBrake HEVC+MP3, non-Contour names) use ffmpeg concat, not mp4_merge
 # v. 20261118.081500 - Size summary: pad basenames; align Total/Output/Difference '|' columns
 # v. 20261117.155100 - run-settings: one blank after ffmpeg box (no double)
 # v. 20261117.145100 - chapter-plan size lines: align basename + | columns
@@ -139,6 +140,9 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -
 
+# 2026.11.18 - v. 0.15.147 - Groups whose chapters all have MP3 audio (HandBrake HEVC+MP3) merge with
+#   ffmpeg concat -c copy even when the file names are not Contour names. mp4_merge produced
+#   unplayable output (e.g. bogus 137301 s duration) for such pairs.
 # 2026.11.18 - v. 0.15.146 - === Size summary ===: basenames padded to the longest name; INPUT lines,
 #   Total, OUTPUT Total and Difference use the same aligned bytes | kB | MB columns (wrapped
 #   layout keeps the same column for Total/Difference).
@@ -5921,9 +5925,21 @@ group_prefers_ffmpeg_concat() {
   local f
   (( ${#files[@]} >= 2 )) || return 1
   for f in "${files[@]}"; do
-    contour_link_basename_parse "${f##*/}" || return 1
+    contour_link_basename_parse "${f##*/}" && continue
+    pgm_file_audio_is_mp3 "$f" && continue
+    return 1
   done
   return 0
+}
+
+# HandBrake-style HEVC+MP3 MP4 (non-Contour names): mp4_merge writes a broken timeline;
+# use ffmpeg concat copy instead. GoPro (AAC + gpmd) stays on mp4_merge.
+pgm_file_audio_is_mp3() {
+  local f="$1" codec
+  command -v ffprobe >/dev/null 2>&1 || return 1
+  codec=$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_name \
+    -of default=nw=1:nk=1 -- "$f" 2>/dev/null | head -n1 | tr -d '\r')
+  [[ "$codec" == mp3 ]]
 }
 
 # Escape a path for an ffmpeg concat demuxer "file '…'" line.
@@ -5952,7 +5968,7 @@ pgm_ffmpeg_concat_copy_files() {
     abs=$(pgm_ffmpeg_concat_escape_path "$abs")
     printf "file '%s'\n" "$abs" >>"$list"
   done
-  echo "$(pgm_ts) Using ffmpeg concat copy for Contour (mp4_merge breaks HandBrake HEVC+MP3)…"
+  echo "$(pgm_ts) Using ffmpeg concat copy (Contour or MP3-audio chapters; mp4_merge breaks HandBrake HEVC+MP3)…"
   if ! ffmpeg -y -hide_banner -loglevel error -stats \
     -f concat -safe 0 -i "$list" -c copy -movflags +faststart "$out"; then
     rc=$?
