@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261118.144900 - merged Contour+2 group: metadata Title/Description/Comment = Contour+2 Camera
 # v. 20261118.091100 - chapter plan: "input total" shares the name column so '|' lines up; GoPro lists sizes too
 # v. 20261118.081600 - MP3-audio chapters (HandBrake HEVC+MP3, non-Contour names) use ffmpeg concat, not mp4_merge
 # v. 20261118.081500 - Size summary: pad basenames; align Total/Output/Difference '|' columns
@@ -141,6 +142,8 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -
 
+# 2026.11.18 - v. 0.15.149 - Merged Contour+2 groups: metadata label (Title/Description/Comment) is
+#   "Contour+2 Camera" (was "Contour+2"), matching the Contour+2 camera profile.
 # 2026.11.18 - v. 0.15.148 - Merge-candidate lists: the "input total (N files):" label is padded to the
 #   same column as the basenames (min width = label), so its bytes | kB | MB '|' lines up with
 #   the file lines above; GoPro groups use the same aligned file lines (sizes + durations).
@@ -4465,6 +4468,10 @@ group_merge_description_label() {
   middle="${middle%_}"
   middle="${middle//_-/ }"
   middle="${middle//_/ }"
+  # Same camera name as set-camera-metadata Contour+2 profile (Comment=Contour+2 Camera).
+  if [[ "$middle" == "Contour+2" ]]; then
+    middle="Contour+2 Camera"
+  fi
   printf '%s\n' "$middle"
 }
 
