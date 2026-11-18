@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261118.145100 - merge metadata: copy Comment from first chapter; label only as fallback
 # v. 20261118.144900 - merged Contour+2 group: metadata Title/Description/Comment = Contour+2 Camera
 # v. 20261118.091100 - chapter plan: "input total" shares the name column so '|' lines up; GoPro lists sizes too
 # v. 20261118.081600 - MP3-audio chapters (HandBrake HEVC+MP3, non-Contour names) use ffmpeg concat, not mp4_merge
@@ -142,6 +143,8 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -
 
+# 2026.11.18 - v. 0.15.150 - Merge metadata copies Comment from the first chapter (e.g. Contour+2 Camera
+#   set by video-pgm-set-camera-metadata); the group label only fills Comment when the chapter has none.
 # 2026.11.18 - v. 0.15.149 - Merged Contour+2 groups: metadata label (Title/Description/Comment) is
 #   "Contour+2 Camera" (was "Contour+2"), matching the Contour+2 camera profile.
 # 2026.11.18 - v. 0.15.148 - Merge-candidate lists: the "input total (N files):" label is padded to the
@@ -4499,6 +4502,10 @@ apply_merge_output_metadata() {
   fi
 
   if exifloc="$(resolve_pgm_exiftool 2>/dev/null)"; then
+    # Camera Comment (e.g. "Contour+2 Camera") comes from the first chapter; the group label
+    # is only the fallback when that chapter has no Comment.
+    local src_comment=""
+    src_comment="$("$exifloc" -api largefilesupport=1 -s3 -Comment -- "$source_file" 2>/dev/null | head -n1 | tr -d '\r')"
     # -P: do not bump FS mtime during tag write; we re-apply times afterward.
     # Title (+ optional date override) in the same pass so a large concat is not rewritten twice.
     et_cmd=(
@@ -4506,7 +4513,7 @@ apply_merge_output_metadata() {
       -api largefilesupport=1 -api QuickTimeUTC=1
       -TagsFromFile "$source_file"
       -time:all -gps:all
-      -Make -Model -Software -Artist -Copyright
+      -Make -Model -Comment -Software -Artist -Copyright
       -Keys:Make -Keys:Model -Keys:GPSCoordinates
       -ItemList:Make -ItemList:Model
       -QuickTime:GPSCoordinates
@@ -4516,9 +4523,11 @@ apply_merge_output_metadata() {
       et_cmd+=(
         -QuickTime:Title="$label"
         -QuickTime:Description="$label"
-        -QuickTime:Comment="$label"
         -ItemList:Title="$label"
       )
+      if [[ -z "$src_comment" ]]; then
+        et_cmd+=( -QuickTime:Comment="$label" )
+      fi
     fi
     if (( use_pending )) && [[ -n "$iso" ]]; then
       # After TagsFromFile so these win over the chapter's CreateDate.
@@ -4534,6 +4543,9 @@ apply_merge_output_metadata() {
     if pgm_run_exiftool_rewrite_with_progress "$output_file" "exiftool metadata" \
       "${et_cmd[@]}"; then
       pgm_log_kv "Metadata" "copied GPS/dates/camera from ${source_file##*/}"
+      if [[ -n "$src_comment" ]]; then
+        pgm_log_kv "Metadata comment" "${src_comment} (copied from first chapter)"
+      fi
       if [[ -n "$label" ]]; then
         pgm_log_kv "Metadata title" "$label"
       fi
