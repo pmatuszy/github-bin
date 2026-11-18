@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261118.081500 - Size summary: pad basenames; align Total/Output/Difference '|' columns
 # v. 20261117.155100 - run-settings: one blank after ffmpeg box (no double)
 # v. 20261117.145100 - chapter-plan size lines: align basename + | columns
 # v. 20261117.144500 - suspect plan: Contour review as clip + gap lines (C1)
@@ -138,6 +139,9 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -
 
+# 2026.11.18 - v. 0.15.146 - === Size summary ===: basenames padded to the longest name; INPUT lines,
+#   Total, OUTPUT Total and Difference use the same aligned bytes | kB | MB columns (wrapped
+#   layout keeps the same column for Total/Difference).
 # 2026.11.17 - v. 0.15.145 - Run-settings ffmpeg box: one trailing blank only (drop the extra
 #   echo after the box that made a double gap).
 # 2026.11.17 - v. 0.15.144 - Chapter-plan per-group file size lines pad basenames to a common
@@ -2744,10 +2748,18 @@ pgm_effective_line_width() {
   fi
 }
 
-# Optional $3 = gap suffix already formatted (e.g. "gap +25 s (confident)").
-pgm_io_input_line() {
+# Shared INPUT/OUTPUT/Difference layout (set by print_merge_group_io_block).
+# NAME_W = longest basename in the group; WRAP=1 puts size under the name on its own line.
+# LAB_W / SEP = width of the label cell and spacing before the size column.
+PGM_IO_NAME_W=0
+PGM_IO_WRAP=0
+PGM_IO_LAB_W=11
+PGM_IO_SEP="  "
+
+# Plain text of the one-line form (for width checks). Sets PGM_IO_LINE_TEXT.
+pgm_io_input_line_text() {
   local part_lbl="$1" f="$2" gap_note="${3:-}"
-  local base="${f##*/}" sz dur dur_disp size_s line width gap_disp=""
+  local base="${f##*/}" sz dur dur_disp size_s gap_disp=""
   sz=$(file_size_bytes "$f")
   size_s="$(format_bytes_human_aligned "$sz")"
   if dur=$(ffprobe_duration_seconds "$f" 2>/dev/null) && [[ -n "$dur" ]]; then
@@ -2756,14 +2768,29 @@ pgm_io_input_line() {
     dur_disp="—"
   fi
   [[ -n "$gap_note" ]] && gap_disp="  ${gap_note}"
-  printf -v line '  %-*s %s  %s  %s%s' "$PGM_IO_PART_W" "$part_lbl" "$base" "$size_s" "$dur_disp" "$gap_disp"
-  width="$(pgm_effective_line_width)"
-  if (( ${#line} <= width )); then
-    printf '%s\n' "$line"
+  printf -v PGM_IO_LINE_TEXT '  %-*s %-*s  %s  %s%s' \
+    "$PGM_IO_PART_W" "$part_lbl" "$PGM_IO_NAME_W" "$base" "$size_s" "$dur_disp" "$gap_disp"
+}
+
+# Optional $3 = gap suffix already formatted (e.g. "gap +25 s (confident)").
+pgm_io_input_line() {
+  local part_lbl="$1" f="$2" gap_note="${3:-}"
+  local base="${f##*/}" sz dur dur_disp size_s gap_disp=""
+  sz=$(file_size_bytes "$f")
+  size_s="$(format_bytes_human_aligned "$sz")"
+  if dur=$(ffprobe_duration_seconds "$f" 2>/dev/null) && [[ -n "$dur" ]]; then
+    dur_disp=$(format_duration_display "$dur")
+  else
+    dur_disp="—"
+  fi
+  [[ -n "$gap_note" ]] && gap_disp="  ${gap_note}"
+  if (( ! PGM_IO_WRAP )); then
+    printf '  %-*s %-*s  %s  %s%s\n' \
+      "$PGM_IO_PART_W" "$part_lbl" "$PGM_IO_NAME_W" "$base" "$size_s" "$dur_disp" "$gap_disp"
     return 0
   fi
   printf '  %-*s %s\n' "$PGM_IO_PART_W" "$part_lbl" "$base"
-  printf '  %-*s %s  %s%s\n' "$PGM_IO_PART_W" "" "$size_s" "$dur_disp" "$gap_disp"
+  printf '  %-*s%s%s  %s%s\n' "$PGM_IO_LAB_W" "" "$PGM_IO_SEP" "$size_s" "$dur_disp" "$gap_disp"
 }
 
 # Seconds from prev end (start+duration) to next start. Prints the integer delta.
@@ -2826,7 +2853,8 @@ print_merge_group_io_block() {
   local f input_total=0 out_sz=0 input_dur_total=0
   local base part_lbl dur gap_note
   local input_total_s output_total_s output_note input_dur_s sep line width
-  local i n=${#files[@]}
+  local i n=${#files[@]} name_w=0 wrap=0 gap_next
+  local -a part_lbls=() gap_notes=()
 
   for f in "${files[@]}"; do
     sz=$(file_size_bytes "$f")
@@ -2834,7 +2862,45 @@ print_merge_group_io_block() {
     if dur=$(ffprobe_duration_seconds "$f" 2>/dev/null) && [[ -n "$dur" ]]; then
       input_dur_total=$(awk -v a="$input_dur_total" -v b="$dur" 'BEGIN{printf "%.3f", a+b}')
     fi
+    base="${f##*/}"
+    (( ${#base} > name_w )) && name_w=${#base}
   done
+
+  # Labels and gaps once; then pick one-line or wrapped layout for the whole block.
+  for (( i = 0; i < n; i++ )); do
+    f="${files[i]}"
+    base="${f##*/}"
+    if part_lbl=$(chapter_part_from_basename "$base" 2>/dev/null); then
+      part_lbl=$(printf 'part %02d' "$part_lbl")
+    else
+      part_lbl=""
+    fi
+    part_lbls+=("$part_lbl")
+    gap_next=""
+    if (( i + 1 < n )); then
+      gap_next=$(pgm_format_gap_to_next_note "$f" "${files[i + 1]}" 2>/dev/null) || gap_next=""
+    fi
+    gap_notes+=("$gap_next")
+  done
+  PGM_IO_NAME_W=$name_w
+  PGM_IO_WRAP=0
+  width="$(pgm_effective_line_width)"
+  for (( i = 0; i < n; i++ )); do
+    pgm_io_input_line_text "${part_lbls[i]}" "${files[i]}" "${gap_notes[i]}"
+    if (( ${#PGM_IO_LINE_TEXT} > width )); then
+      wrap=1
+      break
+    fi
+  done
+  PGM_IO_WRAP=$wrap
+  if (( wrap )); then
+    PGM_IO_LAB_W=$(( PGM_IO_PART_W + 3 ))
+    PGM_IO_SEP=" "
+  else
+    PGM_IO_LAB_W=$(( PGM_IO_PART_W + 1 + name_w ))
+    PGM_IO_SEP="  "
+  fi
+  (( PGM_IO_LAB_W < 11 )) && PGM_IO_LAB_W=11
 
   if [[ -e "$output_file" ]]; then
     out_sz=$(file_size_bytes "$output_file")
@@ -2844,7 +2910,7 @@ print_merge_group_io_block() {
       output_note+="  $(format_duration_display "$dur")"
     fi
   else
-    output_total_s="—"
+    printf -v output_total_s '%48s' "—"
     output_note="(not created yet)"
   fi
   input_total_s="$(format_bytes_human_aligned "$input_total")"
@@ -2853,38 +2919,21 @@ print_merge_group_io_block() {
   echo "  INPUT (${#files[@]} parts)"
   printf '  %s\n' "$sep"
   for (( i = 0; i < n; i++ )); do
-    f="${files[i]}"
-    base="${f##*/}"
-    if part_lbl=$(chapter_part_from_basename "$base" 2>/dev/null); then
-      part_lbl=$(printf 'part %02d' "$part_lbl")
-    else
-      part_lbl=""
-    fi
-    gap_note=""
-    if (( i + 1 < n )); then
-      gap_note=$(pgm_format_gap_to_next_note "$f" "${files[i + 1]}" 2>/dev/null) || gap_note=""
-    fi
-    pgm_io_input_line "$part_lbl" "$f" "$gap_note"
+    pgm_io_input_line "${part_lbls[i]}" "${files[i]}" "${gap_notes[i]}"
   done
   if [[ -n "$input_dur_total" ]] && awk -v d="$input_dur_total" 'BEGIN{exit !(d>0)}'; then
     input_dur_s=$(format_duration_display "$input_dur_total")
   else
     input_dur_s="—"
   fi
-  printf '  %-*s %s  %s\n' "$PGM_IO_PART_W" "Total:" \
+  printf '  %-*s%s%s  %s\n' "$PGM_IO_LAB_W" "Total:" "$PGM_IO_SEP" \
     "$input_total_s" "$input_dur_s"
   echo
   echo "  OUTPUT"
   printf '  %s\n' "$sep"
-  printf -v line '  %s  Total: %s  %s' "${output_file}" "$output_total_s" "$output_note"
-  width="$(pgm_effective_line_width)"
-  if (( ${#line} <= width )); then
-    printf '%s\n' "$line"
-  else
-    printf '  %s\n' "${output_file}"
-    printf '  %-*s Total: %s  %s\n' "$PGM_IO_PART_W" "" \
-      "$output_total_s" "$output_note"
-  fi
+  printf '  %s\n' "${output_file}"
+  printf '  %-*s%s%s  %s\n' "$PGM_IO_LAB_W" "Total:" "$PGM_IO_SEP" \
+    "$output_total_s" "$output_note"
 }
 
 # Absolute size difference (always non-negative).
@@ -2899,16 +2948,18 @@ format_bytes_abs_human() {
 # Describe which side is larger: input parts vs merged output (positive difference only).
 format_size_comparison_line() {
   local input_total="$1" output_bytes="$2"
-  local diff=0
+  local diff=0 note=""
   if (( input_total > output_bytes )); then
     diff=$(( input_total - output_bytes ))
-    printf '  Difference: %s — input files are larger than output\n' "$(format_bytes_abs_human "$diff")"
+    note="input files are larger than output"
   elif (( output_bytes > input_total )); then
     diff=$(( output_bytes - input_total ))
-    printf '  Difference: %s — output is larger than input files\n' "$(format_bytes_abs_human "$diff")"
+    note="output is larger than input files"
   else
-    printf '  Difference: 0 bytes | 0.00 kB | 0.00 MB — input total and output are the same size\n'
+    note="input total and output are the same size"
   fi
+  printf '  %-*s%s%s — %s\n' "${PGM_IO_LAB_W:-11}" "Difference:" "${PGM_IO_SEP:-  }" \
+    "$(format_bytes_human_aligned "$diff")" "$note"
 }
 
 # Background exiftool PID while rewriting a merge output (for Ctrl-C / progress).
