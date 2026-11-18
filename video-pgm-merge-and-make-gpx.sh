@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261118.091100 - chapter plan: "input total" shares the name column so '|' lines up; GoPro lists sizes too
 # v. 20261118.081600 - MP3-audio chapters (HandBrake HEVC+MP3, non-Contour names) use ffmpeg concat, not mp4_merge
 # v. 20261118.081500 - Size summary: pad basenames; align Total/Output/Difference '|' columns
 # v. 20261117.155100 - run-settings: one blank after ffmpeg box (no double)
@@ -140,6 +141,9 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -
 
+# 2026.11.18 - v. 0.15.148 - Merge-candidate lists: the "input total (N files):" label is padded to the
+#   same column as the basenames (min width = label), so its bytes | kB | MB '|' lines up with
+#   the file lines above; GoPro groups use the same aligned file lines (sizes + durations).
 # 2026.11.18 - v. 0.15.147 - Groups whose chapters all have MP3 audio (HandBrake HEVC+MP3) merge with
 #   ffmpeg concat -c copy even when the file names are not Contour names. mp4_merge produced
 #   unplayable output (e.g. bogus 137301 s duration) for such pairs.
@@ -2696,12 +2700,17 @@ print_chapter_file_lines_aligned() {
   local -a bases=()
 
   PGM_CHAPTER_LINES_TOTAL_BYTES=0
+  PGM_CHAPTER_COL_W=0
   (( ${#files[@]} > 0 )) || return 0
   for f in "${files[@]}"; do
     base="${f##*/}"
     bases+=("$base")
     (( ${#base} > max_w )) && max_w=${#base}
   done
+  # The "input total (N files):" label shares this column so its '|' lines up too.
+  local total_lbl="input total (${#files[@]} files):"
+  (( ${#total_lbl} > max_w )) && max_w=${#total_lbl}
+  PGM_CHAPTER_COL_W=$max_w
   for i in "${!files[@]}"; do
     f="${files[i]}"
     base="${bases[i]}"
@@ -2716,6 +2725,13 @@ print_chapter_file_lines_aligned() {
         "$indent" "$max_w" "$base" "$(format_bytes_human_aligned "$sz")"
     fi
   done
+}
+
+# "input total (N files):" line under print_chapter_file_lines_aligned (same '|' columns).
+print_chapter_input_total_aligned() {
+  local indent="$1" n="$2"
+  printf '%s%-*s  %s\n' "$indent" "${PGM_CHAPTER_COL_W:-0}" "input total (${n} files):" \
+    "$(format_bytes_human_aligned "${PGM_CHAPTER_LINES_TOTAL_BYTES:-0}")"
 }
 
 # Print full basename (never truncate — long GoPro names must stay readable).
@@ -7795,8 +7811,7 @@ print_group_plan() {
         printf '  [forced] %d files → %s\n' "${#files[@]}" "${out_name##*/}"
       fi
       print_chapter_file_lines_aligned '      ' "${files[@]}"
-      printf '      input total (%d files): %s\n' \
-        "${#files[@]}" "$(format_bytes_human_aligned "${PGM_CHAPTER_LINES_TOTAL_BYTES:-0}")"
+      print_chapter_input_total_aligned '      ' "${#files[@]}"
       echo
     done
     return 0
@@ -7839,8 +7854,7 @@ print_group_plan() {
           "$gidx" "$part_groups" "${#files[@]}" "$out_name"
       fi
       print_chapter_file_lines_aligned '      ' "${files[@]}"
-      printf '      input total (%d files): %s\n' \
-        "${#files[@]}" "$(format_bytes_human_aligned "${PGM_CHAPTER_LINES_TOTAL_BYTES:-0}")"
+      print_chapter_input_total_aligned '      ' "${#files[@]}"
       echo
     done
   fi
@@ -7887,8 +7901,7 @@ print_group_plan() {
         fi
       fi
       print_chapter_file_lines_aligned '      ' "${files[@]}"
-      printf '      input total (%d files): %s\n' \
-        "${#files[@]}" "$(format_bytes_human_aligned "${PGM_CHAPTER_LINES_TOTAL_BYTES:-0}")"
+      print_chapter_input_total_aligned '      ' "${#files[@]}"
       echo
     done
   fi
@@ -7909,8 +7922,7 @@ print_group_plan() {
           "$gidx" "$contour_groups" "${#files[@]}" "$out_name"
       fi
       print_chapter_file_lines_aligned '      ' "${files[@]}"
-      printf '      input total (%d files): %s\n' \
-        "${#files[@]}" "$(format_bytes_human_aligned "${PGM_CHAPTER_LINES_TOTAL_BYTES:-0}")"
+      print_chapter_input_total_aligned '      ' "${#files[@]}"
       echo
     done
   fi
@@ -7933,8 +7945,7 @@ print_group_plan() {
       fi
       contour_print_suspect_review "${files[@]}"
       print_chapter_file_lines_aligned '      ' "${files[@]}"
-      printf '      input total (%d files): %s\n' \
-        "${#files[@]}" "$(format_bytes_human_aligned "${PGM_CHAPTER_LINES_TOTAL_BYTES:-0}")"
+      print_chapter_input_total_aligned '      ' "${#files[@]}"
       echo
     done
   fi
@@ -7954,13 +7965,8 @@ print_group_plan() {
         printf '  [group %d/%d] %d chapters → %s\n' \
           "$gidx" "$raw_gopro_groups" "${#files[@]}" "$out_name"
       fi
-      group_bytes=0
-      for f in "${files[@]}"; do
-        printf '      %s\n' "${f##*/}"
-        sz=$(file_size_bytes "$f")
-        (( group_bytes += sz ))
-      done
-      printf '      input total (%d files): %s\n' "${#files[@]}" "$(format_bytes_human "$group_bytes")"
+      print_chapter_file_lines_aligned '      ' "${files[@]}"
+      print_chapter_input_total_aligned '      ' "${#files[@]}"
       echo
     done
   fi
@@ -7986,8 +7992,7 @@ print_group_plan() {
       fi
       print_dashcam_gpx_suggestion "$out_name" '      '
       print_chapter_file_lines_aligned '      ' "${files[@]}"
-      printf '      input total (%d files): %s\n' \
-        "${#files[@]}" "$(format_bytes_human_aligned "${PGM_CHAPTER_LINES_TOTAL_BYTES:-0}")"
+      print_chapter_input_total_aligned '      ' "${#files[@]}"
       echo
     done
   fi
