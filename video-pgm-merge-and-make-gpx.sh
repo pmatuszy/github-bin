@@ -1101,25 +1101,25 @@ resolve_merger_path_for_merge() {
     "n|Keep using: ${merger}" \
     "q|Quit"
   choice="$REPLY"
-    case "$choice" in
+  case "$choice" in
     y)
-        dest=$(mp4_merge_install_local_binary "$merger") || return 1
-        dest_abs=$(mp4_merge_abs_path "$dest" 2>/dev/null || printf '%s' "$dest")
-        mp4_merge_collect_extras "$dest_abs"
-        mp4_merge_remove_extras "$dest_abs"
-        echo "$(pgm_ts) mp4_merge is now at ${dest}"
-        printf '%s\n' "$dest"
-        return 0
-        ;;
-      n)
-        printf '%s\n' "$merger"
-        return 0
-        ;;
-      q)
-        echo "$(pgm_ts) Quit."
-        return 2
-        ;;
-    esac
+      dest=$(mp4_merge_install_local_binary "$merger") || return 1
+      dest_abs=$(mp4_merge_abs_path "$dest" 2>/dev/null || printf '%s' "$dest")
+      mp4_merge_collect_extras "$dest_abs"
+      mp4_merge_remove_extras "$dest_abs"
+      echo "$(pgm_ts) mp4_merge is now at ${dest}"
+      printf '%s\n' "$dest"
+      return 0
+      ;;
+    n)
+      printf '%s\n' "$merger"
+      return 0
+      ;;
+    q)
+      echo "$(pgm_ts) Quit."
+      return 2
+      ;;
+  esac
 }
 
 # Sets REPLY to: install | keep | quit
@@ -1144,32 +1144,32 @@ prompt_mp4_merge_update_action() {
     return 0
   fi
   local choice
-    case "$state" in
-      missing)
+  case "$state" in
+    missing)
       echo
       pgm_print_question "mp4_merge not installed"
       pgm_arrow_menu y \
         "y|Download and install to ${MP4_MERGE_INSTALL_DIR}" \
         "n|Cancel" \
         "q|Quit"
-        ;;
-      latest)
+      ;;
+    latest)
       echo
       pgm_print_question "Already on latest release"
       pgm_arrow_menu n \
         "n|Keep current install" \
         "y|Re-download and replace anyway" \
         "q|Quit"
-        ;;
-      outdated)
+      ;;
+    outdated)
       echo
       pgm_print_question "Update available"
       pgm_arrow_menu y \
         "y|Replace with latest release" \
         "n|Keep current install" \
         "q|Quit"
-        ;;
-      unknown)
+      ;;
+    unknown)
       echo
       pgm_print_question "Installed hash unknown on GitHub"
       pgm_arrow_menu y \
@@ -1180,10 +1180,10 @@ prompt_mp4_merge_update_action() {
     *)
       REPLY=keep
       return 0
-        ;;
-    esac
+      ;;
+  esac
   choice="$REPLY"
-    case "$state:$choice" in
+  case "$state:$choice" in
     missing:y)  REPLY=install; return 0 ;;
     missing:n)  REPLY=keep; echo "$(pgm_ts) Install cancelled."; return 0 ;;
     latest:n)   REPLY=keep; return 0 ;;
@@ -1541,7 +1541,7 @@ pgm_print_run_settings_equivalent_cli() {
   elif [[ -n "${SCRIPT_SELF_LIVE_PATH:-}" ]]; then
     cmd="$(basename -- "${SCRIPT_SELF_LIVE_PATH}")"
   else
-  cmd="$(basename -- "${BASH_SOURCE[0]:-$0}")"
+    cmd="$(basename -- "${BASH_SOURCE[0]:-$0}")"
   fi
   [[ -n "$cmd" ]] || cmd="video-pgm-merge-and-make-gpx.sh"
 
@@ -1842,8 +1842,8 @@ print_pgm_timing_summary() {
   if declare -F script_summary_begin >/dev/null 2>&1; then
     script_summary_begin 22
   else
-  echo
-  echo "--- Run summary ---"
+    echo
+    echo "--- Run summary ---"
     pgm_summary_kv "Script" "$(script_live_basename 2>/dev/null || basename -- "$0")"
     pgm_summary_kv "Version" "${SCRIPT_VERSION_NUMBER:-unknown}"
   fi
@@ -1866,7 +1866,7 @@ print_pgm_timing_summary() {
   if declare -F script_summary_end >/dev/null 2>&1; then
     script_summary_end
   else
-  echo
+    echo
   fi
 }
 
@@ -1926,7 +1926,7 @@ pgm_read_key() {
   if (( PGM_USE_COLORS )); then
     printf '%s %s%s%s' "$(pgm_ts)" "$PGM_C_G" "$prompt" "$PGM_C_0"
   else
-  printf '%s %s' "$(pgm_ts)" "$prompt"
+    printf '%s %s' "$(pgm_ts)" "$prompt"
   fi
   flush_stdin
   if pgm_read_timeout_is_limited && [[ "$timeout" =~ ^[0-9]+$ ]] && (( timeout > 0 )); then
@@ -2964,9 +2964,9 @@ print_merge_group_io_block() {
   echo
   echo "  OUTPUT"
   printf '  %s\n' "$sep"
-    printf '  %s\n' "${output_file}"
+  printf '  %s\n' "${output_file}"
   printf '  %-*s%s%s  %s\n' "$PGM_IO_LAB_W" "Total:" "$PGM_IO_SEP" \
-      "$output_total_s" "$output_note"
+    "$output_total_s" "$output_note"
 }
 
 # Absolute size difference (always non-negative).
@@ -3715,16 +3715,16 @@ size_split_chapter_timestamps_follow() {
   [[ "$tol" =~ ^[0-9]+$ ]] || tol=2
   dur=$(ffprobe_duration_seconds "$prev_f" 2>/dev/null) || dur=""
 
-    if [[ -n "$dur" ]]; then
-      expected=$(awk -v p="$prev_epoch" -v d="$dur" 'BEGIN{printf "%d", p+d+0.5}')
-      delta=$(( next_epoch - expected ))
-      if (( delta >= -tol && delta <= tol )); then
-        return 0
-      fi
+  if [[ -n "$dur" ]]; then
+    expected=$(awk -v p="$prev_epoch" -v d="$dur" 'BEGIN{printf "%d", p+d+0.5}')
+    delta=$(( next_epoch - expected ))
+    if (( delta >= -tol && delta <= tol )); then
+      return 0
     fi
-    gap=$(( next_epoch - prev_epoch ))
-    part_chapter_timelapse_wall_clock_ok "$prev_f" "$gap" "$dur" && return 0
-    # Without duration: bare _Timelapse chapters often sit ~20–80 min apart (Hero7 ~4 GB).
+  fi
+  gap=$(( next_epoch - prev_epoch ))
+  part_chapter_timelapse_wall_clock_ok "$prev_f" "$gap" "$dur" && return 0
+  # Without duration: bare _Timelapse chapters often sit ~20–80 min apart (Hero7 ~4 GB).
   if [[ -z "$dur" ]] && gopro_basename_is_timelapse "$pb" \
     && (( gap >= 1200 && gap <= 4800 )); then
     return 0
@@ -3897,7 +3897,7 @@ ffprobe_duration_seconds() {
   key="$(readlink -f -- "$f" 2>/dev/null || printf '%s' "$f")"
   if [[ -n "${PGM_FFPROBE_DUR_CACHE[$key]+x}" ]]; then
     d="${PGM_FFPROBE_DUR_CACHE[$key]}"
-  [[ -n "$d" ]] || return 1
+    [[ -n "$d" ]] || return 1
     printf '%s\n' "$d"
     return 0
   fi
@@ -4064,8 +4064,8 @@ merge_group_assert_codecs() {
   fp0="${fps[0]}"
   for i in "${!files[@]}"; do
     [[ "${fps[i]}" == "$fp0" ]] && continue
-  echo "$(pgm_ts) Refusing merge: video/audio tracks do not match (mp4_merge needs the same codecs and layout)." >&2
-  echo >&2
+    echo "$(pgm_ts) Refusing merge: video/audio tracks do not match (mp4_merge needs the same codecs and layout)." >&2
+    echo >&2
     merge_group_print_fingerprint_table "${files[@]}"
     echo >&2
     if group_prefers_ffmpeg_concat "${files[@]}" 2>/dev/null \
@@ -4552,17 +4552,17 @@ apply_merge_output_metadata() {
       pgm_log_kv "Metadata" "copied GPS/dates/camera from ${source_file##*/}"
       if [[ -n "$src_comment" ]]; then
         pgm_log_kv "Metadata comment" "${src_comment} (copied from first chapter)"
-    fi
-    if [[ -n "$label" ]]; then
+      fi
+      if [[ -n "$label" ]]; then
         pgm_log_kv "Metadata title" "$label"
       fi
       if (( use_pending )); then
         pgm_log_kv "Output times" "media tags from ${PGM_PENDING_OUTPUT_TIMES_LABEL} (chosen before merge)"
         PGM_PENDING_OUTPUT_TIMES_MEDIA_DONE=1
       fi
-      else
+    else
       pgm_log_kv "Metadata" "exiftool TagsFromFile failed (GPS/dates may be incomplete)"
-        rc=1
+      rc=1
       if [[ -n "$label" ]]; then
         pgm_log_kv "Metadata title" "could not write via exiftool"
       fi
@@ -4598,13 +4598,13 @@ apply_merge_output_metadata() {
       pgm_set_fs_times_epoch "$gpx_side" "$PGM_PENDING_OUTPUT_TIMES_EPOCH" || true
     fi
   else
-  if touch -r "$source_file" -- "$output_file" 2>/dev/null; then
-    pgm_log_kv "Filesystem times" "mtime/atime from ${source_file##*/}"
-  else
-    pgm_log_kv "Filesystem times" "touch -r failed"
-    rc=1
-  fi
-  pgm_copy_creation "$source_file" "$output_file" || true
+    if touch -r "$source_file" -- "$output_file" 2>/dev/null; then
+      pgm_log_kv "Filesystem times" "mtime/atime from ${source_file##*/}"
+    else
+      pgm_log_kv "Filesystem times" "touch -r failed"
+      rc=1
+    fi
+    pgm_copy_creation "$source_file" "$output_file" || true
   fi
   return "$rc"
 }
@@ -5234,8 +5234,8 @@ pgm_decide_output_times() {
   notes+=("(planned output name)")
   labels+=("Filesystem")
   epochs+=("$src_e")
-    if [[ -n "$src_e" ]]; then
-      notes+=("(mtime / first chapter)")
+  if [[ -n "$src_e" ]]; then
+    notes+=("(mtime / first chapter)")
   else
     notes+=("(mtime missing or before 1990)")
   fi
@@ -6431,14 +6431,14 @@ part_chapter_timestamps_follow() {
   [[ "$tol" =~ ^[0-9]+$ ]] || tol=180
   dur=$(ffprobe_duration_seconds "$prev_f" 2>/dev/null) || dur=""
 
-    if [[ -n "$dur" ]]; then
-      expected=$(awk -v p="$prev_epoch" -v d="$dur" 'BEGIN{printf "%d", p+d+0.5}')
-      delta=$(( next_epoch - expected ))
-      if (( delta >= -tol && delta <= tol )); then
-        return 0
-      fi
+  if [[ -n "$dur" ]]; then
+    expected=$(awk -v p="$prev_epoch" -v d="$dur" 'BEGIN{printf "%d", p+d+0.5}')
+    delta=$(( next_epoch - expected ))
+    if (( delta >= -tol && delta <= tol )); then
+      return 0
     fi
-    gap=$(( next_epoch - prev_epoch ))
+  fi
+  gap=$(( next_epoch - prev_epoch ))
   part_chapter_timelapse_wall_clock_ok "$prev_f" "$gap" "$dur" && return 0
   part_chapter_realtime_wall_clock_gap_ok "$prev_f" "$gap"
 }
@@ -7087,9 +7087,9 @@ dashcam_warn_no_gps() {
     "q|Quit" \
     "c|Continue anyway. Merge the videos, and do not write a GPX"
   case "$REPLY" in
-      q) echo "$(pgm_ts) Quit."; return 1 ;;
-      c) echo "$(pgm_ts) Continue anyway. GPX files will not be created."; return 0 ;;
-    esac
+    q) echo "$(pgm_ts) Quit."; return 1 ;;
+    c) echo "$(pgm_ts) Continue anyway. GPX files will not be created."; return 0 ;;
+  esac
 }
 
 # 0 when $1 is a non-empty GPX track (at least one point).
@@ -8744,18 +8744,18 @@ prompt_merge_all_temp_dir() {
       "q|Quit"
   fi
   choice="$REPLY"
-    case "$choice" in
-      q)
-        echo "$(pgm_ts) Quit."
-        return 2
-        ;;
+  case "$choice" in
+    q)
+      echo "$(pgm_ts) Quit."
+      return 2
+      ;;
     y) ;;
     n)
-        MERGE_IN_PLACE_FOR_RUN=1
-        echo "$(pgm_ts) Writing in this directory for this merge and the rest of this run."
-        return 0
-        ;;
-    esac
+      MERGE_IN_PLACE_FOR_RUN=1
+      echo "$(pgm_ts) Writing in this directory for this merge and the rest of this run."
+      return 0
+      ;;
+  esac
   MERGE_TEMP_FOR_RUN="$tdir"
   echo "$(pgm_ts) Using ${tdir} for this merge and the rest of this run."
   if ! merge_open_temp_work "$tdir" "$final"; then
@@ -8880,23 +8880,23 @@ choose_merge_output_path() {
       "q|Quit"
   fi
   choice="$REPLY"
-    case "$choice" in
-      q)
-        echo "$(pgm_ts) Quit."
-        return 2
-        ;;
-      d)
-        MERGE_TEMP_FOR_RUN="$tdir"
-        echo "$(pgm_ts) Using ${tdir} for this merge and the rest of this run."
-        ;;
-      r)
-        MERGE_IN_PLACE_FOR_RUN=1
-        echo "$(pgm_ts) Writing in this directory for this merge and the rest of this run."
-        return 0
-        ;;
+  case "$choice" in
+    q)
+      echo "$(pgm_ts) Quit."
+      return 2
+      ;;
+    d)
+      MERGE_TEMP_FOR_RUN="$tdir"
+      echo "$(pgm_ts) Using ${tdir} for this merge and the rest of this run."
+      ;;
+    r)
+      MERGE_IN_PLACE_FOR_RUN=1
+      echo "$(pgm_ts) Writing in this directory for this merge and the rest of this run."
+      return 0
+      ;;
     y) ;;
     n) return 0 ;;
-    esac
+  esac
   if ! merge_open_temp_work "$tdir" "$final"; then
     echo "$(pgm_ts) Could not create a temp directory in ${tdir}; writing here." >&2
     return 0
@@ -8931,7 +8931,7 @@ run_merge_group() {
       return 0
     fi
   else
-  merge_group_assert_codecs "${files[@]}" || return 1
+    merge_group_assert_codecs "${files[@]}" || return 1
   fi
 
   output_file=$(group_output_file "${files[@]}")
@@ -8992,8 +8992,8 @@ run_merge_group() {
       echo "$(pgm_ts) This group needs mp4_merge, but only ffmpeg Contour-merge mode is available." >&2
       rc=1
     else
-  "${merger}" "${files[@]}" --out "${write_path}"
-  rc=$?
+      "${merger}" "${files[@]}" --out "${write_path}"
+      rc=$?
     fi
   fi
   if [[ -n "$norm_dir" ]]; then
@@ -9305,7 +9305,7 @@ prompt_merge_group_action() {
     REPLY=skip
     return 0
   fi
-    if (( complete )); then
+  if (( complete )); then
     echo
     pgm_print_question "Already merged — group ${group_num}/${group_total}"
     pgm_arrow_menu n \
@@ -9315,24 +9315,24 @@ prompt_merge_group_action() {
       "p|Preview merge seams in terminal" \
       "d|Delete input chapter files — keep merged output; you confirm before delete" \
       "q|Quit"
-      choice="${REPLY,,}"
-      case "$choice" in
+    choice="${REPLY,,}"
+    case "$choice" in
       n)  REPLY=skip; pgm_log_kv "Action" "Keeping existing output and inputs."; return 0 ;;
-        a)
-          SKIP_MERGED_PROMPTS=1
-          echo "$(pgm_ts) Already-merged groups will not be asked about again this run."
-          REPLY=skip
-          pgm_log_kv "Action" "Keeping existing output and inputs."
-          return 0
-          ;;
+      a)
+        SKIP_MERGED_PROMPTS=1
+        echo "$(pgm_ts) Already-merged groups will not be asked about again this run."
+        REPLY=skip
+        pgm_log_kv "Action" "Keeping existing output and inputs."
+        return 0
+        ;;
       r)  REPLY=redo; return 0 ;;
       p)  REPLY=preview_seams; return 0 ;;
       d)  REPLY=delete_inputs; return 0 ;;
       q)  REPLY=quit; return 0 ;;
-      esac
-    elif (( output_exists && can_gpx )); then
+    esac
+  elif (( output_exists && can_gpx )); then
     echo
-      if (( short_n )); then
+    if (( short_n )); then
       pgm_print_question "Short clip in this group. Generate the GPX anyway?"
     else
       pgm_print_question "No GPX beside the merged file — group ${group_num}/${group_total}"
@@ -9345,8 +9345,8 @@ prompt_merge_group_action() {
       "d|Delete input chapter files — keep merged output; you confirm before delete" \
       "a|Skip all remaining groups" \
       "q|Quit"
-      choice="${REPLY,,}"
-      case "$choice" in
+    choice="${REPLY,,}"
+    case "$choice" in
       y)  REPLY=write_gpx; return 0 ;;
       n)  REPLY=skip; pgm_log_kv "Action" "Leaving the merged file without a GPX."; return 0 ;;
       r)  REPLY=redo; return 0 ;;
@@ -9354,11 +9354,11 @@ prompt_merge_group_action() {
       d)  REPLY=delete_inputs; return 0 ;;
       a)  REPLY=skip_all; return 0 ;;
       q)  REPLY=quit; return 0 ;;
-      esac
-    elif (( output_exists )); then
-      if (( ! gpx_ok )); then
-        echo "$(pgm_ts) Merged file is here, but the GPX is missing and there is no GPSData*.txt to build it."
-      fi
+    esac
+  elif (( output_exists )); then
+    if (( ! gpx_ok )); then
+      echo "$(pgm_ts) Merged file is here, but the GPX is missing and there is no GPSData*.txt to build it."
+    fi
     echo
     pgm_print_question "Already merged — group ${group_num}/${group_total}"
     pgm_arrow_menu n \
@@ -9368,22 +9368,22 @@ prompt_merge_group_action() {
       "p|Preview merge seams in terminal" \
       "d|Delete input chapter files — keep merged output; you confirm before delete" \
       "q|Quit"
-      choice="${REPLY,,}"
-      case "$choice" in
+    choice="${REPLY,,}"
+    case "$choice" in
       n)  REPLY=skip; pgm_log_kv "Action" "Keeping existing output and inputs."; return 0 ;;
-        a)
-          SKIP_MERGED_PROMPTS=1
-          echo "$(pgm_ts) Already-merged groups will not be asked about again this run."
-          REPLY=skip
-          pgm_log_kv "Action" "Keeping existing output and inputs."
-          return 0
-          ;;
+      a)
+        SKIP_MERGED_PROMPTS=1
+        echo "$(pgm_ts) Already-merged groups will not be asked about again this run."
+        REPLY=skip
+        pgm_log_kv "Action" "Keeping existing output and inputs."
+        return 0
+        ;;
       r)  REPLY=redo; return 0 ;;
       p)  REPLY=preview_seams; return 0 ;;
       d)  REPLY=delete_inputs; return 0 ;;
       q)  REPLY=quit; return 0 ;;
-      esac
-    else
+    esac
+  else
     if (( contour_suspect )); then
       local -a suspect_menu=()
       echo "$(pgm_ts) Contour suspect review (${suspect_note}). Not a confident chapter chain."
@@ -9458,14 +9458,14 @@ prompt_merge_group_action() {
       merge_def=1
     fi
     echo
-      if (( short_n )); then
+    if (( short_n )); then
       pgm_print_question "Short clip in this group. Merge anyway?"
-      else
+    else
       pgm_print_question "Choice for group ${group_num}/${group_total}"
-      fi
+    fi
     pgm_arrow_menu "$merge_def" "${merge_menu[@]}"
-      choice="${REPLY,,}"
-      case "$choice" in
+    choice="${REPLY,,}"
+    case "$choice" in
       y)  REPLY=merge; return 0 ;;
       n)  REPLY=skip; return 0 ;;
       1)  REPLY=preview_joins; return 0 ;;
@@ -9473,8 +9473,8 @@ prompt_merge_group_action() {
       a)  REPLY=skip_all; return 0 ;;
       m)  REPLY=merge_all; return 0 ;;
       q)  REPLY=quit; return 0 ;;
-      esac
-    fi
+    esac
+  fi
 }
 
 # Recording-time sort key: filename YYYYMMDD_HHMMSS when present, else filesystem mtime.
@@ -9666,7 +9666,7 @@ show_merge_group_detail() {
     suspect_note="${PGM_MERGE_GROUP_CONTOUR_SUSPECT_NOTE:-suspect gap}"
     echo "=== Merge group ${group_num} of ${group_total} (${#files[@]} parts) — Contour SUSPECT (${suspect_note}) ==="
   else
-  echo "=== Merge group ${group_num} of ${group_total} (${#files[@]} parts) ==="
+    echo "=== Merge group ${group_num} of ${group_total} (${#files[@]} parts) ==="
   fi
   if [[ "${PGM_MERGE_GROUP_NEEDS_NORMALIZE:-0}" == 1 ]]; then
     echo "  Note: audio/time_base differ — Contour remux candidate (video copy + AAC + unify time_base)."
@@ -9774,19 +9774,19 @@ dashcam_offer_gpx_only() {
           "n|Skip this file" \
           "q|Quit"
         case "$REPLY" in
-            y)
-              dashcam_write_gpx_from_concat "${gpx_outs[$i]}"
-              _skip["${gpx_outs[$i]##*/}"]=1
-              ;;
-            n)
-              _skip["${gpx_outs[$i]##*/}"]=1
-              echo "$(pgm_ts) Skipped ${gpx_outs[$i]##*/}."
-              ;;
-            q)
-              echo "$(pgm_ts) Quit."
-              return 1
-              ;;
-          esac
+          y)
+            dashcam_write_gpx_from_concat "${gpx_outs[$i]}"
+            _skip["${gpx_outs[$i]##*/}"]=1
+            ;;
+          n)
+            _skip["${gpx_outs[$i]##*/}"]=1
+            echo "$(pgm_ts) Skipped ${gpx_outs[$i]##*/}."
+            ;;
+          q)
+            echo "$(pgm_ts) Quit."
+            return 1
+            ;;
+        esac
       done
       if (( any_clips )); then
         echo "$(pgm_ts) Each file that still has its clips will be asked about."
@@ -9816,24 +9816,24 @@ do_merge() {
       echo "$(pgm_ts) mp4_merge not found — Contour groups can still merge via ffmpeg concat."
       merger="__ffmpeg_concat_only__"
     else
-    mp4_merge_print_not_found_help
-    if ! prompt_install_mp4_merge_now; then
-      return 1
-    fi
-    merger=$(find_merger) || {
-      echo "$(pgm_ts) mp4_merge is still not available after the install attempt — cannot merge." >&2
-      return 1
-    }
+      mp4_merge_print_not_found_help
+      if ! prompt_install_mp4_merge_now; then
+        return 1
+      fi
+      merger=$(find_merger) || {
+        echo "$(pgm_ts) mp4_merge is still not available after the install attempt — cannot merge." >&2
+        return 1
+      }
     fi
   }
   if [[ "$merger" != "__ffmpeg_concat_only__" ]]; then
-  merger=$(resolve_merger_path_for_merge "$merger") || {
-    local resolve_rc=$?
-    if (( resolve_rc == 2 )); then
-      return 0
-    fi
-    return 1
-  }
+    merger=$(resolve_merger_path_for_merge "$merger") || {
+      local resolve_rc=$?
+      if (( resolve_rc == 2 )); then
+        return 0
+      fi
+      return 1
+    }
   fi
 
   local sorted_mp4=()
@@ -10023,9 +10023,9 @@ do_merge() {
     fi
     while true; do
       output_file=$(group_output_file "${files[@]}")
-    show_merge_group_detail "$group_num" "$mergeable_total" "${files[@]}"
-    prompt_merge_group_action "$group_num" "$mergeable_total" "$output_file" "${files[@]}"
-    action=$REPLY
+      show_merge_group_detail "$group_num" "$mergeable_total" "${files[@]}"
+      prompt_merge_group_action "$group_num" "$mergeable_total" "$output_file" "${files[@]}"
+      action=$REPLY
       if [[ "$action" == edit ]]; then
         local edit_rc=0
         prompt_merge_group_edit_files files
