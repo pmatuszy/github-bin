@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261118.145300 - bare Contour merge fallback label is Contour+2 Camera (was Contour)
 # v. 20261118.145100 - merge metadata: copy Comment from first chapter; label only as fallback
 # v. 20261118.144900 - merged Contour+2 group: metadata Title/Description/Comment = Contour+2 Camera
 # v. 20261118.091100 - chapter plan: "input total" shares the name column so '|' lines up; GoPro lists sizes too
@@ -143,6 +144,8 @@
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.154826 - after merge: copy GPS/dates from first chapter; FS times via touch -
 
+# 2026.11.18 - v. 0.15.151 - Bare-named Contour merges (size-split / suspect groups) use the fallback
+#   label "Contour+2 Camera" instead of "Contour" when the first chapter has no Comment.
 # 2026.11.18 - v. 0.15.150 - Merge metadata copies Comment from the first chapter (e.g. Contour+2 Camera
 #   set by video-pgm-set-camera-metadata); the group label only fills Comment when the chapter has none.
 # 2026.11.18 - v. 0.15.149 - Merged Contour+2 groups: metadata label (Title/Description/Comment) is
@@ -4463,7 +4466,7 @@ group_merge_description_label() {
   fb="${files[0]##*/}"
   if (( ${#files[@]} >= 2 )) && { group_is_contour_size_split "${files[@]}" \
     || group_is_contour_suspect "${files[@]}"; }; then
-    printf 'Contour\n'
+    printf 'Contour+2 Camera\n'
     return 0
   fi
   middle=$(gopro_middle_from_basename "$fb") || return 1
