@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261120.102000 - standalone gap list: fixed-width days/hours/minutes/seconds columns (e.g. " 5d  0h 47m 05s")
 # v. 20261120.101000 - standalone gap list: "(next file)" names aligned in one column
 # v. 20261120.100500 - chapter plan: standalone clips show the gap to the next clip (seconds … days) and why they do not chain
 # v. 20261120.090500 - curl/df via SCRIPT_CURL_BIN / SCRIPT_DF_BIN (known path, else type -P)
@@ -7910,22 +7911,26 @@ print_size_split_group_hint() {
   fi
 }
 
-# Seconds → "26 s", "3 min 12 s", "2 h 05 min", "3 d 4 h" (a leading "-" keeps the sign).
-pgm_gap_human() {
-  local s="$1" sign=""
+# Fixed-width gap, e.g. " 5d  0h 47m 05s": sign column, then days / hours / minutes / seconds
+# right-aligned in their own columns; leading zero units are blank. $1 = seconds, $2 = day digits.
+pgm_gap_cols() {
+  local s="$1" dw="${2:-1}" sign=" " d h m x
   [[ "$s" =~ ^-?[0-9]+$ ]] || return 1
   if (( s < 0 )); then
     sign="-"
     s=$(( -s ))
   fi
-  if (( s < 60 )); then
-    printf '%s%d s' "$sign" "$s"
-  elif (( s < 3600 )); then
-    printf '%s%d min %02d s' "$sign" $(( s / 60 )) $(( s % 60 ))
-  elif (( s < 86400 )); then
-    printf '%s%d h %02d min' "$sign" $(( s / 3600 )) $(( (s % 3600) / 60 ))
+  d=$(( s / 86400 ))
+  h=$(( (s % 86400) / 3600 ))
+  m=$(( (s % 3600) / 60 ))
+  x=$(( s % 60 ))
+  printf '%s' "$sign"
+  if (( d > 0 )); then printf '%*dd ' "$dw" "$d"; else printf '%*s' $(( dw + 2 )) ''; fi
+  if (( d > 0 || h > 0 )); then printf '%2dh ' "$h"; else printf '    '; fi
+  if (( d > 0 || h > 0 || m > 0 )); then
+    printf '%2dm %02ds' "$m" "$x"
   else
-    printf '%s%d d %d h' "$sign" $(( s / 86400 )) $(( (s % 86400) / 3600 ))
+    printf '    %2ds' "$x"
   fi
 }
 
@@ -8180,8 +8185,8 @@ print_group_plan() {
       (( ${#base} > sa_w )) && sa_w=${#base}
     done
     # Pass 1: gap text and next name per clip (so the "(next)" column can be aligned).
-    local -a sa_gap_txts=() sa_next_names=()
-    local sa_gw=0
+    local -a sa_gap_txts=() sa_next_names=() sa_gap_secs=()
+    local sa_gw=0 sa_dw=1 sa_abs sa_i
     for f in "${sa_files[@]}"; do
       sa_next=""
       for (( sa_idx = 0; sa_idx < ${#sa_sorted[@]}; sa_idx++ )); do
@@ -8190,23 +8195,31 @@ print_group_plan() {
           break
         fi
       done
-      if [[ -z "$sa_next" ]]; then
-        sa_gap_txt="no later clip in this folder"
-      else
+      sa_gap=""
+      if [[ -n "$sa_next" ]]; then
         sa_gap=$(pgm_clip_gap_to_next_sec "$f" "$sa_next" 2>/dev/null) || sa_gap=""
         if [[ -n "$sa_gap" ]]; then
-          sa_gap_txt="gap to next: $(pgm_gap_human "$sa_gap")"
-          (( sa_gap < 0 )) && sa_gap_txt+=" [overlap]"
-        else
-          sa_gap_txt="gap to next: unknown"
+          sa_abs=$(( sa_gap < 0 ? -sa_gap : sa_gap ))
+          sa_e=$(( sa_abs / 86400 ))
+          (( ${#sa_e} > sa_dw )) && sa_dw=${#sa_e}
         fi
       fi
-      sa_gap_txts+=("$sa_gap_txt")
+      sa_gap_secs+=("$sa_gap")
       sa_next_names+=("${sa_next##*/}")
-      (( ${#sa_gap_txt} > sa_gw )) && sa_gw=${#sa_gap_txt}
+    done
+    for (( sa_i = 0; sa_i < ${#sa_files[@]}; sa_i++ )); do
+      if [[ -z "${sa_next_names[sa_i]}" ]]; then
+        sa_gap_txt="no later clip in this folder"
+      elif [[ -n "${sa_gap_secs[sa_i]}" ]]; then
+        sa_gap_txt="gap to next: $(pgm_gap_cols "${sa_gap_secs[sa_i]}" "$sa_dw")"
+        (( ${#sa_gap_txt} > sa_gw )) && sa_gw=${#sa_gap_txt}
+      else
+        sa_gap_txt="gap to next: unknown"
+        (( ${#sa_gap_txt} > sa_gw )) && sa_gw=${#sa_gap_txt}
+      fi
+      sa_gap_txts+=("$sa_gap_txt")
     done
     # Pass 2: print with file names, gap texts and "(next file)" in fixed columns.
-    local sa_i
     for (( sa_i = 0; sa_i < ${#sa_files[@]}; sa_i++ )); do
       f="${sa_files[sa_i]}"
       base="${f##*/}"
@@ -8221,7 +8234,7 @@ print_group_plan() {
         printf '%-*s   %s\n' "$sa_w" "$base" "${sa_gap_txts[sa_i]}"
       fi
     done
-    echo "      Gap = start of the next clip minus the end of this clip. Contour clips chain when the gap is within ${PGM_CONTOUR_TIME_MAX_STOP_SEC:-12} s (up to ${PGM_CONTOUR_TIME_SUSPECT_MAX_STOP_SEC:-45} s is offered for review)."
+    echo "      Gap (days d, hours h, minutes m, seconds s) = start of the next clip minus the end of this clip; a leading - means they overlap. Contour clips chain when the gap is within ${PGM_CONTOUR_TIME_MAX_STOP_SEC:-12} s (up to ${PGM_CONTOUR_TIME_SUSPECT_MAX_STOP_SEC:-45} s is offered for review)."
     echo
   fi
   print_orphan_concat_section "${all_mp4[@]}"
