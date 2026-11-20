@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261120.090500 - curl/df via SCRIPT_CURL_BIN / SCRIPT_DF_BIN (known path, else type -P)
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
@@ -61,9 +62,9 @@ wynik_po_restarcie=$?
 
 wiadomosc=""
 if (( $(echo "$m" |grep -i "error" | wc -l) > 0 )) || (( $wynik_po_restarcie != 0 )) ;then
-  /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
+  "${SCRIPT_CURL_BIN:-/usr/bin/curl}" -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
 else
-  /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
+  "${SCRIPT_CURL_BIN:-/usr/bin/curl}" -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
 fi
 
 . "${profile_location_dir:-$HOME}/bin/_script_footer.sh"

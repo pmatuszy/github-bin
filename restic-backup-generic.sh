@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261120.090500 - curl/df via SCRIPT_CURL_BIN / SCRIPT_DF_BIN (known path, else type -P)
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260718.082500 - translate backup retry messages to English
 
@@ -90,7 +91,7 @@ else
     echo
     echo '#####################################################'
     echo '#####################################################' )
-  /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
+  "${SCRIPT_CURL_BIN:-/usr/bin/curl}" -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
   exit 4
 fi
 
@@ -114,7 +115,7 @@ if [ ! -f "$RESTIC_BIN" ]; then
     echo
     echo '#####################################################'
     echo '#####################################################' )
-  /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
+  "${SCRIPT_CURL_BIN:-/usr/bin/curl}" -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
   exit 2
 fi
 
@@ -130,7 +131,7 @@ if [ ! -d "$XDG_CACHE_HOME" ] ; then
    m=$( echo "${SCRIPT_VERSION}";echo ;
    echo "XDG_CACHE_HOME ($XDG_CACHE_HOME)  does not exist"
    echo "EXITING ..." )
-   /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
+   "${SCRIPT_CURL_BIN:-/usr/bin/curl}" -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
    exit 4
 fi
 
@@ -144,7 +145,7 @@ if pgrep -fx "${RESTIC_BIN}" > /dev/null ; then
     echo
     echo '#####################################################'
     echo '#####################################################' )
-  /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
+  "${SCRIPT_CURL_BIN:-/usr/bin/curl}" -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
   exit 2
 fi
 
@@ -152,11 +153,11 @@ if [ ! -d "$XDG_CACHE_HOME" ] ; then
   m=$( echo "${SCRIPT_VERSION}";echo ;
     echo "$XDG_CACHE_HOME does not exist"
     echo "EXITING ..." )
-  /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
+  "${SCRIPT_CURL_BIN:-/usr/bin/curl}" -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
   exit 1
 fi
 
-/usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 -o /dev/null "$HEALTHCHECK_URL"/start 2>/dev/null
+"${SCRIPT_CURL_BIN:-/usr/bin/curl}" -fsS -m 100 --retry 10 --retry-delay 10 -o /dev/null "$HEALTHCHECK_URL"/start 2>/dev/null
 
 export run_before_backup_log=$( eval $RUN_BEFORE_BACKUP 2>&1 ) 
 
@@ -215,9 +216,9 @@ fi
 HC_message="$run_before_backup_log $backup_log $m $run_after_backup_log"
 
 if (( $return_code != 0 )); then
-  echo "$HC_message" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
+  echo "$HC_message" | "${SCRIPT_CURL_BIN:-/usr/bin/curl}" -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
 else
-  echo "$HC_message" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
+  echo "$HC_message" | "${SCRIPT_CURL_BIN:-/usr/bin/curl}" -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
 fi
 
 . "${profile_location_dir:-$HOME}/bin/_script_footer.sh"

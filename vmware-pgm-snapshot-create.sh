@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261120.090500 - curl/df via SCRIPT_CURL_BIN / SCRIPT_DF_BIN (known path, else type -P)
 # v. 20261120.084500 - vmrun via "$SCRIPT_ENV_BIN" (/bin/env, else /usr/bin/env, else type -P env)
 # v. 20261006.183955 - disk listing uses /bin/df so a shell df function cannot hide the byte count
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
@@ -456,9 +457,9 @@ _pgm_ed="$(_pgm_vmrun_enc_display)"
 _pgm_show_selected_vm_boxed "$choice" "$selected"
 
 echo "(PGM) Storage — filesystem containing this VM (same mount as the .vmx path):"
-if ! /bin/df -hT -- "$selected" 2>/dev/null; then
-  echo "(PGM) /bin/df -hT failed; trying /bin/df -h ..." >&2
-  /bin/df -h -- "$selected" || echo "(PGM) Could not show disk space for: $selected" >&2
+if ! "${SCRIPT_DF_BIN:-/bin/df}" -hT -- "$selected" 2>/dev/null; then
+  echo "(PGM) ${SCRIPT_DF_BIN:-/bin/df} -hT failed; trying ${SCRIPT_DF_BIN:-/bin/df} -h ..." >&2
+  "${SCRIPT_DF_BIN:-/bin/df}" -h -- "$selected" || echo "(PGM) Could not show disk space for: $selected" >&2
 fi
 echo
 

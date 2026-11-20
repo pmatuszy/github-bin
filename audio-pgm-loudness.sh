@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261120.090500 - curl/df via SCRIPT_CURL_BIN / SCRIPT_DF_BIN (known path, else type -P)
 # v. 20261116.224800 - no blank line between question/prompt and arrow menu
 # v. 20261116.154200 - fix progress ETA awk (missing printf arg broke left/at display)
 # v. 20261116.160000 - multi-choice prompts use shared script_arrow_menu (Up/Down)
@@ -3561,10 +3562,10 @@ count_file_audio_streams() {
 }
 
 loudness_disk_space_df_bin() {
-  if [[ "$(type -t df 2>/dev/null)" == function && -x /bin/df ]]; then
-    printf '%s\n' /bin/df
-  elif [[ -x /bin/df ]]; then
-    printf '%s\n' /bin/df
+  if [[ "$(type -t df 2>/dev/null)" == function && -x "${SCRIPT_DF_BIN:-/bin/df}" ]]; then
+    printf '%s\n' "${SCRIPT_DF_BIN:-/bin/df}"
+  elif [[ -x "${SCRIPT_DF_BIN:-/bin/df}" ]]; then
+    printf '%s\n' "${SCRIPT_DF_BIN:-/bin/df}"
   else
     command -v df 2>/dev/null || return 1
   fi

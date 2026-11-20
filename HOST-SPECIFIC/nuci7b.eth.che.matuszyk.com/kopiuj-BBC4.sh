@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261120.090500 - curl/df via SCRIPT_CURL_BIN / SCRIPT_DF_BIN (known path, else type -P)
 # v. 20261006.183955 - disk listing uses /bin/df so a shell df function cannot hide the byte count
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
@@ -101,7 +102,7 @@ ssh "${SOURCE_HOST}" "cd ${SOURCE_DIR} ; /bin/ls -1tr | tail -n-1"
 echo ; echo -n "Skopiujemy "
 ssh "${SOURCE_HOST}" "cd ${SOURCE_DIR} ; /bin/ls -ltr | head -n-1 " | awk 'BEGIN {suma=0} {suma=suma+$5} END {print suma/1024/1024 " MB danych"}'
 
-echo ; /bin/df -h $DEST ; echo
+echo ; "${SCRIPT_DF_BIN:-/bin/df}" -h $DEST ; echo
 echo "Poczatek kopiowania: $(date '+%Y.%m.%d %H:%M:%S')" ; echo
 
 rsync $std_options -e "ssh -T -o Compression=no -x" --files-from=<(ssh $SOURCE_HOST "cd ${SOURCE_DIR} ; /bin/ls -1tr | head -n-1" ) "${SOURCE_HOST}:${SOURCE_DIR}" "${DEST}"

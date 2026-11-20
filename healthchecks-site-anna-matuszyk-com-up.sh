@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261120.090500 - curl/df via SCRIPT_CURL_BIN / SCRIPT_DF_BIN (known path, else type -P)
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 # 2026.07.16 - v. 1.1 - rename from sprawdz-czy-dziala-strona-www.anna.matuszyk.com.sh; add -h/-v/--no_startup_delay
@@ -70,7 +71,7 @@ while (( blad != 0 && how_many_retries != 0 )); do
   # Below - that way you treat 23 the same as .success..
   if curl -fsL "$URL" 2>/dev/null | grep -qm1 "In Short" || [[ $? -eq 23 ]]; then
     /usr/bin/timeout --foreground --preserve-status --kill-after="$kill_after" "$timeout" \
-      /usr/bin/curl -fsS -m 100 --fail -L -4 --retry "$curl_retry" --retry-delay "$curl_retry_delay" "$HEALTHCHECK_URL" > /dev/null 2>&1
+      "${SCRIPT_CURL_BIN:-/usr/bin/curl}" -fsS -m 100 --fail -L -4 --retry "$curl_retry" --retry-delay "$curl_retry_delay" "$HEALTHCHECK_URL" > /dev/null 2>&1
     blad=0
     break
   else
@@ -84,7 +85,7 @@ done
 
 if (( blad != 0 )); then
   /usr/bin/timeout --foreground --preserve-status --kill-after="$kill_after" "$timeout" \
-    /usr/bin/curl -fsS -m 100 --retry "$curl_retry" --retry-delay "$curl_retry_delay" "$HEALTHCHECK_URL/fail" > /dev/null 2>&1
+    "${SCRIPT_CURL_BIN:-/usr/bin/curl}" -fsS -m 100 --retry "$curl_retry" --retry-delay "$curl_retry_delay" "$HEALTHCHECK_URL/fail" > /dev/null 2>&1
 fi
 
 . "${profile_location_dir:-$HOME}/bin/_script_footer.sh"

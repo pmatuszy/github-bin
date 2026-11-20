@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261120.090500 - curl/df via SCRIPT_CURL_BIN / SCRIPT_DF_BIN (known path, else type -P)
 # v. 20261006.183955 - disk listing uses /bin/df so a shell df function cannot hide the byte count
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260717.220000 - rename zamontuj-encrypted.sh -> mount-encrypted.sh
@@ -81,9 +82,9 @@ run_fsck /dev/mapper/encrypted_luks_file_in_root
 mount -o noatime /dev/mapper/encrypted_luks_file_in_root /encrypted
 return_code=$?
 
-/usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 -o /dev/null "$HEALTHCHECK_URL"/${return_code} 2>/dev/null
+"${SCRIPT_CURL_BIN:-/usr/bin/curl}" -fsS -m 100 --retry 10 --retry-delay 10 -o /dev/null "$HEALTHCHECK_URL"/${return_code} 2>/dev/null
 
-/bin/df -h /encrypted
+"${SCRIPT_DF_BIN:-/bin/df}" -h /encrypted
 echo
 
 /root/bin/healthchecks-encrypted-is-mounted.sh

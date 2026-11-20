@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261120.090500 - curl/df via SCRIPT_CURL_BIN / SCRIPT_DF_BIN (known path, else type -P)
 # v. 20261006.183955 - disk listing uses /bin/df so a shell df function cannot hide the byte count
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
@@ -164,6 +165,6 @@ sleep 1
 
 mount_fs_master /dev/vg_crypto_20221114_DyskD/lv_20221114_DyskD /mnt/luks-lv-icybox-A noatime,data=writeback,barrier=0,nobh,errors=remount-ro
 
-/bin/df -h /encrypted /mnt/luks-lv-icybox-A
+"${SCRIPT_DF_BIN:-/bin/df}" -h /encrypted /mnt/luks-lv-icybox-A
 
 . "${profile_location_dir:-$HOME}/bin/_script_footer.sh"

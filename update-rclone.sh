@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261120.090500 - curl/df via SCRIPT_CURL_BIN / SCRIPT_DF_BIN (known path, else type -P)
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260718.082500 - translate remaining Polish user-facing messages to English
 
@@ -64,7 +65,7 @@ if [ -z "${RCLONE_BIN}" ] ; then
     echo '#####################################################'
     )
   if [[ -n "${HEALTHCHECK_URL:-}" ]]; then
-    /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
+    "${SCRIPT_CURL_BIN:-/usr/bin/curl}" -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
   fi
   exit 8
 fi
@@ -112,7 +113,7 @@ else
 fi
 
 if [[ -n "${HEALTHCHECK_URL:-}" ]]; then
-  /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$wiadomosc" -o /dev/null "$HEALTHCHECK_URL"/${return_code} 2>/dev/null
+  "${SCRIPT_CURL_BIN:-/usr/bin/curl}" -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$wiadomosc" -o /dev/null "$HEALTHCHECK_URL"/${return_code} 2>/dev/null
 fi
 
 . "${profile_location_dir:-$HOME}/bin/_script_footer.sh"

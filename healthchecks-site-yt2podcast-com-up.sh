@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261120.090500 - curl/df via SCRIPT_CURL_BIN / SCRIPT_DF_BIN (known path, else type -P)
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 # 2026.07.16 - v. 0.9 - rename from sprawdz-czy-dziala-strona-yt2podcast.com.sh; add -h/-v/--no_startup_delay
@@ -65,7 +66,7 @@ export kill_after=30
 
 while (( $blad != 0 && $how_many_retries != 0 )) ; do
   if [ $(/usr/bin/timeout --foreground --preserve-status --kill-after=$kill_after $timeout wget $URL -qO - |grep "Directory Listing"|wc -l) -gt 0 ];then
-    /usr/bin/timeout --foreground --preserve-status --kill-after=$kill_after $timeout /usr/bin/curl -fsS -m 100 --retry $curl_retry --retry-delay $curl_retry_delay -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
+    /usr/bin/timeout --foreground --preserve-status --kill-after=$kill_after $timeout "${SCRIPT_CURL_BIN:-/usr/bin/curl}" -fsS -m 100 --retry $curl_retry --retry-delay $curl_retry_delay -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
     blad=0
     break
   else
@@ -78,7 +79,7 @@ while (( $blad != 0 && $how_many_retries != 0 )) ; do
 done
 
 if (( $blad != 0 ));then
-   /usr/bin/timeout --foreground --preserve-status --kill-after=$kill_after $timeout /usr/bin/curl -fsS -m 100 --retry $how_many_retries  --retry-delay $retry_delay -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
+   /usr/bin/timeout --foreground --preserve-status --kill-after=$kill_after $timeout "${SCRIPT_CURL_BIN:-/usr/bin/curl}" -fsS -m 100 --retry $how_many_retries  --retry-delay $retry_delay -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
 fi
 
 . "${profile_location_dir:-$HOME}/bin/_script_footer.sh"

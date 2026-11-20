@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261120.090500 - curl/df via SCRIPT_CURL_BIN / SCRIPT_DF_BIN (known path, else type -P)
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
 
@@ -161,13 +162,13 @@ print_ffmpeg_in_use() {
 
 resolve_df_bin() {
     if [[ "$(type -t df 2>/dev/null)" == "function" ]]; then
-        if [[ -x /bin/df ]]; then
+        if [[ -x "${SCRIPT_DF_BIN:-/bin/df}" ]]; then
             echo "/bin/df"
             return 0
         fi
         return 1
     fi
-    if [[ -x /bin/df ]]; then
+    if [[ -x "${SCRIPT_DF_BIN:-/bin/df}" ]]; then
         echo "/bin/df"
         return 0
     fi
@@ -340,7 +341,7 @@ maybe_ping_healthcheck() {
         echo "bytes recorded: ${bytes_recorded_total}"
         echo "exit code: ${exit_code}"
     )
-    echo "${hc_message}" | /usr/bin/curl -fsS -m 100 --retry 3 --retry-delay 5 \
+    echo "${hc_message}" | "${SCRIPT_CURL_BIN:-/usr/bin/curl}" -fsS -m 100 --retry 3 --retry-delay 5 \
         --data-binary @- -o /dev/null "${hc_url}/${exit_code}" 2>/dev/null || true
 }
 

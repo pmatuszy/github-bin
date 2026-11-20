@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261120.090500 - curl/df via SCRIPT_CURL_BIN / SCRIPT_DF_BIN (known path, else type -P)
 # v. 20261006.183955 - disk listing uses /bin/df so a shell df function cannot hide the byte count
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
@@ -53,7 +54,7 @@ if [ $(mountpoint -q $1 ; echo $?) -ne 0 ] ; then
    return 
 fi
 
-luks_device="$(/bin/df -h $1 | grep $1  | awk '{print $1}')"
+luks_device="$("${SCRIPT_DF_BIN:-/bin/df}" -h $1 | grep $1  | awk '{print $1}')"
 
 umount $1 
 

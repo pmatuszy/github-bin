@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261120.090500 - curl/df via SCRIPT_CURL_BIN / SCRIPT_DF_BIN (known path, else type -P)
 # v. 20260922.203118 - fix HEALTHCHECK_URL unbound under set -u; only curl when URL is set
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
@@ -54,7 +55,7 @@ if [[ -f "$HEALTHCHECKS_FILE" ]]; then
   HEALTHCHECK_URL=$(grep "^$(script_live_basename)" "$HEALTHCHECKS_FILE" | awk '{print $2}')
 fi
 if [[ -n "${HEALTHCHECK_URL:-}" ]]; then
-  /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 -o /dev/null "${HEALTHCHECK_URL}/start" 2>/dev/null
+  "${SCRIPT_CURL_BIN:-/usr/bin/curl}" -fsS -m 100 --retry 10 --retry-delay 10 -o /dev/null "${HEALTHCHECK_URL}/start" 2>/dev/null
 fi
 
 check_if_installed fstrim util-linux
@@ -67,7 +68,7 @@ HC_message=$(
 return_code=$?
 
 if [[ -n "${HEALTHCHECK_URL:-}" ]]; then
-  echo "$HC_message" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "${HEALTHCHECK_URL}/${return_code}" 2>/dev/null
+  echo "$HC_message" | "${SCRIPT_CURL_BIN:-/usr/bin/curl}" -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "${HEALTHCHECK_URL}/${return_code}" 2>/dev/null
 fi
 
 . "${profile_location_dir:-$HOME}/bin/_script_footer.sh"

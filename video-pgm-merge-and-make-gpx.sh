@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261120.090500 - curl/df via SCRIPT_CURL_BIN / SCRIPT_DF_BIN (known path, else type -P)
 # v. 20261120.084500 - seam preview env via "$SCRIPT_ENV_BIN" (/bin/env, else /usr/bin/env, else type -P env)
 # v. 20261120.080900 - subfolders: ask at startup; folder arguments merge each folder in its own run (no mixing with files)
 # v. 20261119.225500 - ffmpeg concat: timelapse-style progress bar with "file N of M", no raw stats line
@@ -762,7 +763,7 @@ detect_mp4_merge_asset() {
 mp4_merge_github_curl() {
   local url="$1"
   pgm_processing_begin
-  /usr/bin/curl -fsSL --max-time 120 "${url}" 2>/dev/null
+  "${SCRIPT_CURL_BIN:-/usr/bin/curl}" -fsSL --max-time 120 "${url}" 2>/dev/null
   pgm_processing_end
 }
 
@@ -849,7 +850,7 @@ install_mp4_merge_asset() {
   echo
 
   pgm_processing_begin
-  if ! /usr/bin/curl -fsSL --max-time 600 -o "${tmp}" "${url}"; then
+  if ! "${SCRIPT_CURL_BIN:-/usr/bin/curl}" -fsSL --max-time 600 -o "${tmp}" "${url}"; then
     pgm_processing_end
     rm -f "${tmp}"
     echo "$(pgm_ts) Download failed." >&2
@@ -8485,9 +8486,9 @@ fs_device_id() {
 # Free bytes on the filesystem that holds $1.
 fs_avail_bytes() {
   local p="$1" n
-  n=$(/bin/df -B1 --output=avail -- "$p" 2>/dev/null | awk 'NR==2 {print $1}')
+  n=$("${SCRIPT_DF_BIN:-/bin/df}" -B1 --output=avail -- "$p" 2>/dev/null | awk 'NR==2 {print $1}')
   if [[ ! "$n" =~ ^[0-9]+$ ]]; then
-    n=$(/bin/df -P -k -- "$p" 2>/dev/null | awk 'NR==2 {printf "%.0f", $4 * 1024}')
+    n=$("${SCRIPT_DF_BIN:-/bin/df}" -P -k -- "$p" 2>/dev/null | awk 'NR==2 {printf "%.0f", $4 * 1024}')
   fi
   [[ "$n" =~ ^[0-9]+$ ]] || return 1
   printf '%s\n' "$n"
@@ -8550,7 +8551,7 @@ refresh_source_disk_kind() {
   SOURCE_DISK_KIND=unknown
   SOURCE_DISK_KIND_WHY="Cannot tell whether the source disk is an SSD."
   src=$(findmnt -n -o SOURCE -T . 2>/dev/null || true)
-  [[ -n "$src" ]] || src=$(/bin/df -P . 2>/dev/null | awk 'NR==2 {print $1}')
+  [[ -n "$src" ]] || src=$("${SCRIPT_DF_BIN:-/bin/df}" -P . 2>/dev/null | awk 'NR==2 {print $1}')
   src="${src%%\[*}"
   if [[ -z "$src" ]]; then
     SOURCE_DISK_KIND_WHY="Cannot tell whether the source disk is an SSD (mount source unknown)."

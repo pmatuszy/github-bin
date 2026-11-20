@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261120.090500 - curl/df via SCRIPT_CURL_BIN / SCRIPT_DF_BIN (known path, else type -P)
 # v. 20261006.183955 - disk listing uses /bin/df so a shell df function cannot hide the byte count
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
@@ -100,7 +101,7 @@ if mountpoint -q "${VC_MOUNT}"; then
   echo
   echo "(PGM) ${VC_MOUNT} is already a mount point — skipping mount."
   echo
-  /bin/df -hP "${VC_MOUNT}"
+  "${SCRIPT_DF_BIN:-/bin/df}" -hP "${VC_MOUNT}"
   echo
   return_code=0
   . "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
@@ -121,7 +122,7 @@ unset PASSWD
 
 if (( return_code == 0 )); then
   echo
-  /bin/df -hP "${VC_MOUNT}"
+  "${SCRIPT_DF_BIN:-/bin/df}" -hP "${VC_MOUNT}"
   echo
 else
   echo

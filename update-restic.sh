@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261120.090500 - curl/df via SCRIPT_CURL_BIN / SCRIPT_DF_BIN (known path, else type -P)
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
 
@@ -65,7 +66,7 @@ if [ -z "${RESTIC_BIN}" ] ; then
     echo '#####################################################'
     echo '#####################################################' 
     )
-  /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
+  "${SCRIPT_CURL_BIN:-/usr/bin/curl}" -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
   exit 8
 fi
 if pgrep -f "${RESTIC_BIN}" > /dev/null ; then
@@ -78,7 +79,7 @@ if pgrep -f "${RESTIC_BIN}" > /dev/null ; then
     echo '#####################################################'
     echo '#####################################################' 
     )
-  /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
+  "${SCRIPT_CURL_BIN:-/usr/bin/curl}" -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
   exit 1
 fi
 
@@ -107,7 +108,7 @@ else
   wiadomosc="$m $wersja_przed $wersja_po"
 fi
 
-/usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$wiadomosc" -o /dev/null "$HEALTHCHECK_URL"/${return_code} 2>/dev/null
+"${SCRIPT_CURL_BIN:-/usr/bin/curl}" -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$wiadomosc" -o /dev/null "$HEALTHCHECK_URL"/${return_code} 2>/dev/null
 
 . "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
 

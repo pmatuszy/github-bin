@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261120.090500 - curl/df via SCRIPT_CURL_BIN / SCRIPT_DF_BIN (known path, else type -P)
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
 
@@ -54,7 +55,7 @@ if (( $# < 2 )) ; then
   if (( $script_is_run_interactively == 1 )); then
     echo ; echo "(PGM) wrong # of command line arguments... (must be more than 1)" ; echo 
   fi
-  echo "(PGM) wrong # of command line arguments... (must be more than 1)" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
+  echo "(PGM) wrong # of command line arguments... (must be more than 1)" | "${SCRIPT_CURL_BIN:-/usr/bin/curl}" -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
   exit 1
 fi
 
@@ -62,7 +63,7 @@ if [ ! -d "${@:$#}" ];then
   if (( $script_is_run_interactively == 1 )); then
     echo ; echo "(PGM) Directory ${@:$#} doesn't exist..." ; echo
   fi
-  echo "(PGM) Directory ${@:$#} doesn't exist..." | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
+  echo "(PGM) Directory ${@:$#} doesn't exist..." | "${SCRIPT_CURL_BIN:-/usr/bin/curl}" -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
   exit 2
 fi
 
@@ -72,7 +73,7 @@ if [ ! $? ] ; then     # if binary can't be found we do not continue
   if (( $script_is_run_interactively == 1 )); then
     echo ; echo "rotate-backups can't be located...";echo
   fi
-  echo "rotate-backups can't be located..." | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
+  echo "rotate-backups can't be located..." | "${SCRIPT_CURL_BIN:-/usr/bin/curl}" -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
   exit 3
 fi
 
@@ -104,6 +105,6 @@ if (( $script_is_run_interactively == 1 )); then
   echo "$HC_MESSAGE"
 fi
 
-echo "$HC_MESSAGE" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/$return_code 2>/dev/null
+echo "$HC_MESSAGE" | "${SCRIPT_CURL_BIN:-/usr/bin/curl}" -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/$return_code 2>/dev/null
 
 exit $?

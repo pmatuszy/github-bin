@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261120.090500 - curl/df via SCRIPT_CURL_BIN / SCRIPT_DF_BIN (known path, else type -P)
 # v. 20261116.224800 - no blank line between question/prompt and arrow menu
 # v. 20261116.160000 - startup and batch menus use shared script_arrow_menu (Up/Down)
 # v. 20261115.200000 - SUMMARY: Family-A chrome + Script/Version at top
@@ -913,7 +914,7 @@ filesystem_mount_for_path() {
     fi
 
     mount_point="$(
-        LC_ALL=C /bin/df -Pk -- "$target_path" 2>/dev/null \
+        LC_ALL=C "${SCRIPT_DF_BIN:-/bin/df}" -Pk -- "$target_path" 2>/dev/null \
         | awk 'NR==2 {print $6}'
     )"
     if [[ -n "$mount_point" ]]; then
@@ -1279,7 +1280,7 @@ check_free_space_or_exit() {
     local avail_kb
 
     avail_kb="$(
-        LC_ALL=C /bin/df -Pk -- "$target_path" 2>/dev/null \
+        LC_ALL=C "${SCRIPT_DF_BIN:-/bin/df}" -Pk -- "$target_path" 2>/dev/null \
         | awk 'NR==2 {gsub(/[^0-9]/, "", $4); print $4}'
     )"
 

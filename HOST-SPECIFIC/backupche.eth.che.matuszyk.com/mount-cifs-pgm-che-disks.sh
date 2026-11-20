@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261120.090500 - curl/df via SCRIPT_CURL_BIN / SCRIPT_DF_BIN (known path, else type -P)
 # v. 20261006.183955 - disk listing uses /bin/df so a shell df function cannot hide the byte count
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
@@ -69,7 +70,7 @@ rem_dir_name="//pgm-che.eth.che.matuszyk.com/DyskE"
 umount "${loc_dir_name}" 2>/dev/null  # unmount first if already mounted, to avoid "mount error(16): Device or resource busy"
 mount.cifs -o user=p,password=$PASSWD "${rem_dir_name}" "${loc_dir_name}"
 
-/bin/df -hP |egrep 'Filesystem|pgm-che.eth.che.matuszyk.com'
+"${SCRIPT_DF_BIN:-/bin/df}" -hP |egrep 'Filesystem|pgm-che.eth.che.matuszyk.com'
 
 set +x
 

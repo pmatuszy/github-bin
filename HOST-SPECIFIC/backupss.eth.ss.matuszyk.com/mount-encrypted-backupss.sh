@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261120.090500 - curl/df via SCRIPT_CURL_BIN / SCRIPT_DF_BIN (known path, else type -P)
 # v. 20261006.183955 - disk listing uses /bin/df so a shell df function cannot hide the byte count
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
@@ -127,7 +128,7 @@ mount -o bind,noatime /mnt/luks-raid1-encA/backup/rclone-user/_restic      /rclo
 mount -o bind,noatime /mnt/luks-raid1-encB/backup/rclone-user/_restic      /rclone-jail/storage-master/backupB
 
 echo
-/bin/df -h /encrypted /mnt/luks-raid1-encA /mnt/luks-raid1-encB \
+"${SCRIPT_DF_BIN:-/bin/df}" -h /encrypted /mnt/luks-raid1-encA /mnt/luks-raid1-encB \
       /rclone-jail/storage-master/replicationA /rclone-jail/storage-master/replicationB \
       /rclone-jail/storage-master/backupA /rclone-jail/storage-master/backupB
 

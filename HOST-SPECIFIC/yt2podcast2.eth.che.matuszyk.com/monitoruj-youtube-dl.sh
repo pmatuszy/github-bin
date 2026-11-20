@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261120.090500 - curl/df via SCRIPT_CURL_BIN / SCRIPT_DF_BIN (known path, else type -P)
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260718.082500 - translate remaining Polish runtime messages to English
 
@@ -160,9 +161,9 @@ while : ; do
 
      was_used_kb=`LC_NUMERIC=en_US printf "%'.f\n" ${pop}`
      is_used_kb=`LC_NUMERIC=en_US printf "%'.f\n" $nast`
-     free_kb=`/bin/df --output=avail /podsync-hdd|tail -1`
+     free_kb=`"${SCRIPT_DF_BIN:-/bin/df}" --output=avail /podsync-hdd|tail -1`
      free_kb=`LC_NUMERIC=en_US printf "%'.f\n" $free_kb`
-     free_pct=`/bin/df --output=pcent /podsync-hdd|tail -1`
+     free_pct=`"${SCRIPT_DF_BIN:-/bin/df}" --output=pcent /podsync-hdd|tail -1`
      
      if [ `egrep "server responded with a 'Too Many Requests' error|Sign in to confirm you.*re not a bot" ${log_glob}|wc -l` -le $max_error_lines ] ; then
        echo -n "[`date '+%Y.%m.%d %H:%M:%S'`] Running. "

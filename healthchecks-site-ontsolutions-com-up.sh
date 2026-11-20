@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261120.090500 - curl/df via SCRIPT_CURL_BIN / SCRIPT_DF_BIN (known path, else type -P)
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 # 2026.07.16 - v. 1.0 - rename from sprawdz-czy-dziala-strona-www.ontsolutions.com.sh; add -h/-v/--no_startup_delay
@@ -66,11 +67,11 @@ export kill_after=30
 
 while (( blad != 0 && how_many_retries != 0 )); do
   if [ $(wget $URL -qO - |grep -i "ontsolutions" | wc -l) -gt 0 ];then 
-    /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
+    "${SCRIPT_CURL_BIN:-/usr/bin/curl}" -fsS -m 100 --retry 10 --retry-delay 10 -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
     
     
     /usr/bin/timeout --foreground --preserve-status --kill-after="$kill_after" "$timeout" \
-      /usr/bin/curl -fsS -m 100 --retry "$curl_retry" --retry-delay "$curl_retry_delay" "$HEALTHCHECK_URL" > /dev/null 2>&1
+      "${SCRIPT_CURL_BIN:-/usr/bin/curl}" -fsS -m 100 --retry "$curl_retry" --retry-delay "$curl_retry_delay" "$HEALTHCHECK_URL" > /dev/null 2>&1
     
     blad=0
     break
@@ -85,7 +86,7 @@ done
 
 if (( blad != 0 )); then
   /usr/bin/timeout --foreground --preserve-status --kill-after="$kill_after" "$timeout" \
-    /usr/bin/curl -fsS -m 100 --retry "$curl_retry" --retry-delay "$curl_retry_delay" "$HEALTHCHECK_URL/fail" > /dev/null 2>&1
+    "${SCRIPT_CURL_BIN:-/usr/bin/curl}" -fsS -m 100 --retry "$curl_retry" --retry-delay "$curl_retry_delay" "$HEALTHCHECK_URL/fail" > /dev/null 2>&1
 fi
 
 . "${profile_location_dir:-$HOME}/bin/_script_footer.sh"

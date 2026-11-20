@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261120.090500 - curl/df via SCRIPT_CURL_BIN / SCRIPT_DF_BIN (known path, else type -P)
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 
@@ -89,7 +90,7 @@ if (( $# == 3 )); then
       MOVE_MODE=1 ;;
     *)
       echo; echo "(PGM) Unknown 3rd parameter ($3) - only --remove-source-files/--move is supported..."; echo
-      echo "(PGM) Unknown 3rd parameter ($3) ..." | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/4 2>/dev/null
+      echo "(PGM) Unknown 3rd parameter ($3) ..." | "${SCRIPT_CURL_BIN:-/usr/bin/curl}" -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/4 2>/dev/null
       exit 4 ;;
   esac
 fi
@@ -256,7 +257,7 @@ fi
 if echo "$HC_MESSAGE" | grep -Eq "^SUMMARY: found=0 transferred=0 deleted=0 failed=0$"; then
   echo > /dev/null
 else
-  echo "$HC_MESSAGE" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/$return_code 2>/dev/null
+  echo "$HC_MESSAGE" | "${SCRIPT_CURL_BIN:-/usr/bin/curl}" -fsS -m 100 --retry 10 --retry-delay 10 --data-binary @- -o /dev/null "$HEALTHCHECK_URL"/$return_code 2>/dev/null
 fi
 
 exit "$return_code"

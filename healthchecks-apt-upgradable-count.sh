@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261120.090500 - curl/df via SCRIPT_CURL_BIN / SCRIPT_DF_BIN (known path, else type -P)
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 # 2026.07.16 - v. 0.8 - rename from sprawdz-ile-apt-list--upgradable.sh; add -h/-v/--no_startup_delay
@@ -83,7 +84,7 @@ done
 # If still failing → exit 2 and notify healthchecks
 if (( blad != 0 )); then
     m=$( echo "${SCRIPT_VERSION}"; echo ; echo "apt update is running on another terminal and lock cannot be acquired, exiting" )
-    /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "${m}" \
+    "${SCRIPT_CURL_BIN:-/usr/bin/curl}" -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "${m}" \
         -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
     exit 2
 fi
@@ -100,10 +101,10 @@ m=$( echo "${SCRIPT_VERSION}";echo
 )
 
 if [ $ile_jest_do_upgradeowania -gt $ile_max_by_nie_raportowac ]; then
-  /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" \
+  "${SCRIPT_CURL_BIN:-/usr/bin/curl}" -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" \
       -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
 else
-  /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" \
+  "${SCRIPT_CURL_BIN:-/usr/bin/curl}" -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" \
       -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
 fi
 

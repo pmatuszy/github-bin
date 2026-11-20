@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261120.090500 - curl/df via SCRIPT_CURL_BIN / SCRIPT_DF_BIN (known path, else type -P)
 # v. 20261006.183955 - disk listing uses /bin/df so a shell df function cannot hide the byte count
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
@@ -49,7 +50,7 @@ luks_file_path=/encrypted.luks2
 cryptsetup luksOpen ${luks_file_path} encrypted_luks_file_in_root
 mount -o noatime /dev/mapper/encrypted_luks_file_in_root /encrypted
 
-/bin/df -h /encrypted
+"${SCRIPT_DF_BIN:-/bin/df}" -h /encrypted
 
 echo startuje vpnserver
 

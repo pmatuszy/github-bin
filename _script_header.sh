@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261120.090500 - script_resolve_tool_bin; SCRIPT_CURL_BIN / SCRIPT_DF_BIN (known path, else type -P)
 # v. 20261120.084500 - SCRIPT_ENV_BIN: /bin/env, else /usr/bin/env, else type -P env (scripts must not hard-code /bin/env)
 # v. 20261120.080900 - script_scan_subdirs / script_ask_include_subdirs for subfolder questions at startup
 # v. 20261117.155100 - tighter startup: one blank after version box; ask_colors no extra blank
@@ -168,6 +169,30 @@ script_resolve_env_bin() {
   return 1
 }
 script_resolve_env_bin || true
+
+# script_resolve_tool_bin VAR TOOL PATH...
+# Sets VAR to the first executable PATH, else type -P TOOL (ignores shell functions such as df),
+# else the first PATH (so the error names a real path). Returns 1 when nothing was found.
+script_resolve_tool_bin() {
+  local var="$1" tool="$2" p
+  shift 2
+  for p in "$@"; do
+    if [[ -x "$p" && ! -d "$p" ]]; then
+      printf -v "$var" '%s' "$p"
+      return 0
+    fi
+  done
+  p="$(type -P "$tool" 2>/dev/null || true)"
+  if [[ -n "$p" && -x "$p" ]]; then
+    printf -v "$var" '%s' "$p"
+    return 0
+  fi
+  printf -v "$var" '%s' "${1:-/usr/bin/$tool}"
+  return 1
+}
+# Scripts call "${SCRIPT_CURL_BIN:-/usr/bin/curl}" and "${SCRIPT_DF_BIN:-/bin/df}".
+script_resolve_tool_bin SCRIPT_CURL_BIN curl /usr/bin/curl /bin/curl || true
+script_resolve_tool_bin SCRIPT_DF_BIN df /bin/df /usr/bin/df || true
 
 # Seal early (before banners / random delay) so an in-place overwrite of the live
 # caller cannot splice bash's remaining source reads. Re-execs once from a temp copy.

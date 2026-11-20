@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261120.090500 - curl/df via SCRIPT_CURL_BIN / SCRIPT_DF_BIN (known path, else type -P)
 # v. 20260923.082630 - default: reboot even when who(1) shows logged-in users
 # v. 20260923.082359 - apt-idle: ignore running /usr/libexec/packagekitd (process and lock holder)
 # v. 20260921.092438 - --help: drop dry-run crontab example
@@ -374,10 +375,10 @@ hc_ping() {
   local body="${2:-}"
   [[ -n "$HEALTHCHECK_URL" ]] || return 0
   if [[ -n "$body" ]]; then
-    printf '%s' "$body" | /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 \
+    printf '%s' "$body" | "${SCRIPT_CURL_BIN:-/usr/bin/curl}" -fsS -m 100 --retry 10 --retry-delay 10 \
       --data-binary @- -o /dev/null "${HEALTHCHECK_URL}${path}" 2>/dev/null || true
   else
-    /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 \
+    "${SCRIPT_CURL_BIN:-/usr/bin/curl}" -fsS -m 100 --retry 10 --retry-delay 10 \
       -o /dev/null "${HEALTHCHECK_URL}${path}" 2>/dev/null || true
   fi
 }

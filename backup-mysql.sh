@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261120.090500 - curl/df via SCRIPT_CURL_BIN / SCRIPT_DF_BIN (known path, else type -P)
 # v. 20261006.183857 - backup listing uses /bin/ls so a shell ls function cannot add --full-time
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
@@ -60,7 +61,7 @@ SCRIPT_VERSION=$(echo ; cat $0|grep -e '# *20[123][0-9]'|head -n 1 | awk '{print
 if (( $? != 0 )); then
    m="echo "${SCRIPT_VERSION}";echo ; I can't connect to MySQL server using mysqlshow "
    wiadomosc=$(echo -e "$SCRIPT_VERSION\n\n$m")
-   /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$wiadomosc" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
+   "${SCRIPT_CURL_BIN:-/usr/bin/curl}" -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$wiadomosc" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
    exit 2
 fi
 m=$( echo "${SCRIPT_VERSION}";echo ; { /usr/bin/nice -19 /usr/bin/mysqldump -u ${MYSQL_USER} --verbose --all-databases | /usr/bin/nice -19 /usr/bin/pbzip2 -9qc -p2 > "${BACKUP_DESTINATION}" ; } 2>&1 ; exit $?)
@@ -73,7 +74,7 @@ OUTPUT_FILE=$(/bin/ls -ltr ${BACKUP_DESTINATION})
 LAST_BACKUP_FILES=$(/bin/ls -l $(dirname ${BACKUP_DESTINATION}) | tail -n $LIMIT_NUMBER_OF_LAST_BACKUPS_TO_LIST)
 wiadomosc=$(echo -e "$SCRIPT_VERSION\n\n$WHAT_DATABASES_WE_HAVE\n\n$m\n\n$OUTPUT_FILE\n\nLAST $LIMIT_NUMBER_OF_LAST_BACKUPS_TO_LIST BACKUP FILES:\n$LAST_BACKUP_FILES")
 
-/usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$wiadomosc" -o /dev/null "$HEALTHCHECK_URL"/${return_code} 2>/dev/null
+"${SCRIPT_CURL_BIN:-/usr/bin/curl}" -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$wiadomosc" -o /dev/null "$HEALTHCHECK_URL"/${return_code} 2>/dev/null
 
 exit $?
 #####

@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261120.090500 - curl/df via SCRIPT_CURL_BIN / SCRIPT_DF_BIN (known path, else type -P)
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
 # 2026.07.16 - v. 0.4 - add -h/--help, -v/--version, --no_startup_delay (parsed before header)
@@ -52,9 +53,9 @@ if [[ -f "$HEALTHCHECKS_FILE" ]]; then
 fi
 
 if [[ -f /var/run/reboot-required ]]; then
-  /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 -o /dev/null "${HEALTHCHECK_URL}/fail" 2>/dev/null
+  "${SCRIPT_CURL_BIN:-/usr/bin/curl}" -fsS -m 100 --retry 10 --retry-delay 10 -o /dev/null "${HEALTHCHECK_URL}/fail" 2>/dev/null
 else
-  /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 -o /dev/null "${HEALTHCHECK_URL}" 2>/dev/null
+  "${SCRIPT_CURL_BIN:-/usr/bin/curl}" -fsS -m 100 --retry 10 --retry-delay 10 -o /dev/null "${HEALTHCHECK_URL}" 2>/dev/null
 fi
 
 exit $?

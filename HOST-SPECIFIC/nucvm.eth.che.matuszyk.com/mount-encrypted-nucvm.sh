@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261120.090500 - curl/df via SCRIPT_CURL_BIN / SCRIPT_DF_BIN (known path, else type -P)
 # v. 20261006.183955 - disk listing uses /bin/df so a shell df function cannot hide the byte count
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
@@ -128,7 +129,7 @@ mount_fs_master /dev/vg_crypto_buffalo2/lv_do_luksa_buffalo2    /mnt/luks-buffal
 
 echo
 # /bin/df -h /encrypted /mnt/luks-buffalo2 /mnt/luks-raidsonic 
-/bin/df -h /encrypted 
+"${SCRIPT_DF_BIN:-/bin/df}" -h /encrypted 
 
 echo ; echo 
 echo "restarting NFS server (service often fails at boot because exported filesystems are not mounted yet)"

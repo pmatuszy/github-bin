@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261120.090500 - curl/df via SCRIPT_CURL_BIN / SCRIPT_DF_BIN (known path, else type -P)
 # v. 20261006.183955 - disk listing uses /bin/df so a shell df function cannot hide the byte count
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
@@ -156,7 +157,7 @@ mount -o bind,noatime /mnt/luks-raid1-16tb/replication1/rclone_user/_rclone/ /rc
 mount -o bind,noatime /mnt/luks-raid1-16tb_another/backup2/rclone_user/_restic /rclone-jail/storage-master/backup2
 mount -o bind,noatime /mnt/luks-raid1-16tb_another/replication2/rclone_user/_rclone/ /rclone-jail/storage-master/replication2
 
-/bin/df -h /encrypted /mnt/luks-raid1-16tb /mnt/luks-raid1-16tb_another
+"${SCRIPT_DF_BIN:-/bin/df}" -h /encrypted /mnt/luks-raid1-16tb /mnt/luks-raid1-16tb_another
 
 nohup rclone --config /root/rclone.conf mount --daemon --allow-other --read-only local-crypt-local-replication1-rclone:/server/MASTER_SOURCE-BBC /mnt/minidlna/MASTER_SOURCE-BBC &
 sleep 3
