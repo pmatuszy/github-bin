@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261120.103000 - Contour chain: allow links across midnight (epoch delta, not same calendar day in the name)
 # v. 20261120.102000 - standalone gap list: fixed-width days/hours/minutes/seconds columns (e.g. " 5d  0h 47m 05s")
 # v. 20261120.101000 - standalone gap list: "(next file)" names aligned in one column
 # v. 20261120.100500 - chapter plan: standalone clips show the gap to the next clip (seconds … days) and why they do not chain
@@ -5784,19 +5785,20 @@ is_full_contour_size_split_segment() { is_contour_chainable_segment "$1"; }
 is_partial_contour_size_split_segment() { is_contour_chainable_segment "$1"; }
 is_renamed_contour_segment() { is_contour_chainable_segment "$1"; }
 
-# Sets CONTOUR_LINK_DELTA = next_start − (prev_start + duration). Same calendar day.
+# Sets CONTOUR_LINK_DELTA = next_start − (prev_start + duration).
+# Both names must be Contour clips. The start times are compared as epoch seconds, so a link
+# across midnight (…_234924 then …_003634 on the next date) is allowed; the delta limits below
+# still decide whether the clips really follow each other.
 contour_chapter_time_delta() {
   local prev_f="$1" next_f="$2"
   local prev_epoch next_epoch dur expected
-  local prev_base next_base prev_day
+  local prev_base next_base
 
   CONTOUR_LINK_DELTA=""
   prev_base="${prev_f##*/}"
   next_base="${next_f##*/}"
   contour_link_basename_parse "$prev_base" || return 1
-  prev_day="$CONTOUR_TS_DATE"
   contour_link_basename_parse "$next_base" || return 1
-  [[ "$CONTOUR_TS_DATE" == "$prev_day" ]] || return 1
 
   prev_epoch="$(pgm_hybrid_start_epoch "$prev_f" 2>/dev/null)" || return 1
   next_epoch="$(pgm_hybrid_start_epoch "$next_f" 2>/dev/null)" || return 1
