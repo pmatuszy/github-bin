@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261120.080900 - ask at startup whether to include subfolders (-r still includes them without asking)
 # v. 20261116.225400 - Processing / apply boxes show absolute Directory + file name
 # v. 20261116.215000 - Fix dates menu: align label and date columns
 # v. 20261116.160500 - Fix dates menu uses shared script_arrow_menu (Up/Down + Enter)
@@ -1942,6 +1943,25 @@ trap mfd_ctrl_c INT
 if ! mfd_find_exiftool >/dev/null; then
   echo "$(mfd_ts) exiftool not found (set MFD_EXIFTOOL or install exiftool)." >&2
   exit 1
+fi
+
+# Subfolders below the chosen folders: ask once (unless -r was given).
+if (( ! RECURSIVE )); then
+  mfd_scan_dirs=()
+  if (( ${#POSITIONALS[@]} == 0 )); then
+    mfd_scan_dirs=(.)
+  else
+    for p in "${POSITIONALS[@]}"; do
+      [[ -d "$p" ]] && mfd_scan_dirs+=("$p")
+    done
+  fi
+  if (( ${#mfd_scan_dirs[@]} > 0 )); then
+    script_scan_subdirs mfd_is_media_file "${mfd_scan_dirs[@]}"
+    script_ask_include_subdirs "Run with -r to include them."
+    rc=$?
+    (( rc == 2 )) && exit 0
+    (( SCRIPT_INCLUDE_SUBDIRS )) && RECURSIVE=1
+  fi
 fi
 
 if (( ${#POSITIONALS[@]} == 0 )); then

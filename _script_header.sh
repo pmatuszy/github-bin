@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261120.080900 - script_scan_subdirs / script_ask_include_subdirs for subfolder questions at startup
 # v. 20261117.155100 - tighter startup: one blank after version box; ask_colors no extra blank
 # v. 20261117.084500 - SCRIPT_HEADER_QUIET=1 skips figlet / Interactive / version box
 # v. 20261116.181000 - script_arrow_menu: Space selects like Enter
@@ -869,6 +870,69 @@ script_arrow_menu() {
   done
 
   script_arrow_menu_restore_tty
+  return 0
+}
+
+#######################################################################################
+# Subfolders: count matching files below the chosen folders (depth 2 and deeper), then
+# ask once whether to include them.
+#   script_scan_subdirs PRED_FN DIR...   PRED_FN gets each file path ("" = every file).
+#     Sets SCRIPT_SUB_FILE_COUNT, SCRIPT_SUB_DIR_COUNT, SCRIPT_SUB_PARENTS (folders holding matches).
+#   script_ask_include_subdirs HINT      Sets SCRIPT_INCLUDE_SUBDIRS=1 on yes. Returns 2 on Quit.
+#     -y or non-interactive: no question (default No); prints HINT instead.
+#######################################################################################
+script_scan_subdirs() {
+  local pred="$1" d f p
+  local -A seen=()
+  shift
+  SCRIPT_SUB_FILE_COUNT=0
+  SCRIPT_SUB_PARENTS=()
+  SCRIPT_INCLUDE_SUBDIRS=0
+  for d in "$@"; do
+    [[ -d "$d" ]] || continue
+    while IFS= read -r -d '' f; do
+      if [[ -n "$pred" ]] && ! "$pred" "$f"; then
+        continue
+      fi
+      (( SCRIPT_SUB_FILE_COUNT++ )) || true
+      p="${f%/*}"
+      if [[ -z "${seen[$p]:-}" ]]; then
+        seen[$p]=1
+        SCRIPT_SUB_PARENTS+=("$p")
+      fi
+    done < <(find "$d" -mindepth 2 -type f -print0 2>/dev/null)
+  done
+  SCRIPT_SUB_DIR_COUNT=${#SCRIPT_SUB_PARENTS[@]}
+}
+
+script_ask_include_subdirs() {
+  local hint="${1:-}" summary
+  SCRIPT_INCLUDE_SUBDIRS=0
+  (( SCRIPT_SUB_FILE_COUNT > 0 )) || return 0
+  summary="${SCRIPT_SUB_FILE_COUNT} file(s) in ${SCRIPT_SUB_DIR_COUNT} subfolder(s)"
+  if (( ${DO_YES:-0} )) || (( ! script_is_run_interactively )); then
+    echo "$(script_ts_now) Subfolders not included (${summary}). ${hint}"
+    return 0
+  fi
+  echo
+  script_print_question "Subfolders also contain ${summary}. Include them?"
+  script_arrow_menu n \
+    "n|No — only this folder (default)" \
+    "y|Yes — include subfolders" \
+    "q|Quit"
+  case "${REPLY,,}" in
+    q)
+      echo "$(script_ts_now) Quit."
+      return 2
+      ;;
+    y)
+      SCRIPT_INCLUDE_SUBDIRS=1
+      echo "$(script_ts_now) Including subfolders."
+      ;;
+    *)
+      echo "$(script_ts_now) Only this folder."
+      ;;
+  esac
   return 0
 }
 

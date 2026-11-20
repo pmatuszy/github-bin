@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261120.080900 - subfolders: ask at startup; folder arguments merge each folder in its own run (no mixing with files)
 # v. 20261119.225500 - ffmpeg concat: timelapse-style progress bar with "file N of M", no raw stats line
 # v. 20261118.145300 - bare Contour merge fallback label is Contour+2 Camera (was Contour)
 # v. 20261118.145100 - merge metadata: copy Comment from first chapter; label only as fallback
@@ -431,9 +432,15 @@ Usage: $(script_live_basename) [-h|--help] [-u|--update] [-v|--version] [-y|--ye
        [FILE +N]
        [-- FILE FILE ...]
        [-- FILE +N]
+       [DIR ...]
 
 Merge chapter MP4 files in the current directory (e.g. GoPro splits) into one
 file using mp4_merge from https://github.com/gyroflow/mp4-merge
+
+With no arguments, the script asks whether to also merge MP4 files in subfolders.
+With DIR arguments, each folder is merged in its own run (it asks its own
+questions); answer yes to the subfolder question to include subfolders of the
+folders given. Do not mix folders and files in one command.
 
 With two or more FILE arguments, those files are merged in the order given
 (forced merge). Prior merge outputs (*_concat_parts_* / *_concat) are allowed
@@ -1411,6 +1418,11 @@ pgm_yn_digit_aliases_ok() {
 
 # Ask once at startup. Default Yes. -y / non-interactive → colors off (cleaner logs).
 pgm_ask_colors() {
+  if [[ -n "${PGM_SUBDIR_CHILD:-}" ]]; then
+    # Folder child run: keep the colour choice the parent run made.
+    pgm_init_colors
+    return 0
+  fi
   PGM_USE_COLORS=0
   pgm_init_colors
   if (( DO_YES )) || (( ! script_is_run_interactively )); then
@@ -10194,6 +10206,42 @@ do_merge() {
   return "${rc}"
 }
 
+# True for *.mp4 (any case); used when counting subfolders.
+pgm_is_mp4_file() {
+  [[ "${1,,}" == *.mp4 ]]
+}
+
+# Run this script inside each folder with the same options. Each folder then asks its own
+# questions. Child runs set PGM_SUBDIR_CHILD=1 so they do not ask about subfolders again.
+pgm_run_merge_children() {
+  local self d crc rc=0
+  local -a fwd=()
+  self="${CALLER_SCRIPT:-${BASH_SOURCE[0]}}"
+  (( DO_YES )) && fwd+=(-y)
+  if (( PGM_READ_TIMEOUT_CLI )); then
+    fwd+=(--read-timeout "$PGM_READ_TIMEOUT")
+  fi
+  fwd+=(--seam-before "$PGM_SEAM_PREVIEW_BEFORE" --seam-after "$PGM_SEAM_PREVIEW_AFTER")
+  for d in "${GPS_DIRS[@]}"; do
+    fwd+=(--gps-dir "$(realpath -m -- "$d")")
+  done
+  if (( PGM_MERGE_TEMP_CLI )); then
+    fwd+=(--temp-dir "$(realpath -m -- "$PGM_MERGE_TEMP")")
+  fi
+  for d in "$@"; do
+    echo
+    echo "$(pgm_ts) === Folder: $(realpath -m -- "$d") ==="
+    (cd -- "$d" && PGM_SUBDIR_CHILD=1 PGM_USE_COLORS="${PGM_USE_COLORS:-0}" bash "$self" "${fwd[@]}")
+    crc=$?
+    if (( crc == 2 )); then
+      echo "$(pgm_ts) Quit."
+      return 2
+    fi
+    (( crc > rc )) && rc=$crc
+  done
+  return "$rc"
+}
+
 # --- parse options (header sourced first so -v can call print_version_banner) ---
 DO_UPDATE=0
 DO_YES=0
@@ -10344,6 +10392,27 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# Folder arguments: each folder is merged on its own (same as cd DIR and run this script there).
+MERGE_DIR_ARGS=()
+if (( ${#FORCE_MERGE_ARGS[@]} > 0 )); then
+  dir_n=0
+  for a in "${FORCE_MERGE_ARGS[@]}"; do
+    [[ -d "$a" ]] && (( dir_n++ )) || true
+  done
+  if (( dir_n > 0 )); then
+    if (( dir_n != ${#FORCE_MERGE_ARGS[@]} )); then
+      echo "$(pgm_ts) Give folders or files, not both (folders are merged one by one)." >&2
+      exit 1
+    fi
+    if (( DO_UPDATE )); then
+      echo "$(pgm_ts) Do not pass folders with -u/--update." >&2
+      exit 1
+    fi
+    MERGE_DIR_ARGS=("${FORCE_MERGE_ARGS[@]}")
+    FORCE_MERGE_ARGS=()
+  fi
+fi
+
 if (( ${#FORCE_MERGE_ARGS[@]} > 0 )); then
   if (( DO_UPDATE )); then
     echo "$(pgm_ts) Do not pass video files with -u/--update." >&2
@@ -10396,8 +10465,40 @@ if (( DO_UPDATE )); then
   exit "${return_code}"
 fi
 
-do_merge
-return_code=$?
+# Folders: given as arguments, or subfolders with MP4s (asked once here). Child runs skip this question.
+MERGE_CHILD_DIRS=()
+MERGE_IN_PROCESS=1
+if [[ -z "${PGM_SUBDIR_CHILD:-}" ]] && (( ${#FORCE_MERGE_ARGS[@]} == 0 )); then
+  if (( ${#MERGE_DIR_ARGS[@]} > 0 )); then
+    MERGE_IN_PROCESS=0
+    MERGE_CHILD_DIRS=("${MERGE_DIR_ARGS[@]}")
+    scan_roots=("${MERGE_DIR_ARGS[@]}")
+  else
+    scan_roots=(.)
+  fi
+  script_scan_subdirs pgm_is_mp4_file "${scan_roots[@]}"
+  script_ask_include_subdirs "Merge subfolders too: give the folders as arguments, e.g. $(script_live_basename) DIR ..."
+  rc=$?
+  if (( rc == 2 )); then
+    return_code=0
+    . "${profile_location_dir:-$HOME}/bin/_script_footer.sh"
+    exit 0
+  fi
+  if (( SCRIPT_INCLUDE_SUBDIRS )); then
+    MERGE_CHILD_DIRS+=("${SCRIPT_SUB_PARENTS[@]}")
+  fi
+fi
+
+return_code=0
+if (( MERGE_IN_PROCESS )); then
+  do_merge
+  return_code=$?
+fi
+
+if (( ${#MERGE_CHILD_DIRS[@]} > 0 && return_code != 2 )); then
+  pgm_run_merge_children "${MERGE_CHILD_DIRS[@]}"
+  return_code=$?
+fi
 
 print_pgm_timing_summary
 

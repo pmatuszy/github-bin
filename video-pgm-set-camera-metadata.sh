@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261120.080900 - ask at startup whether to include subfolders (-r still includes them without asking)
 # v. 20261116.225400 - Processing / apply boxes show absolute Directory + file name
 # v. 20261116.160500 - camera profile + decide menus use shared script_arrow_menu
 # v. 20261116.144500 - Ctrl-C during decide/prompts also prints SUMMARY (not only during apply)
@@ -1425,6 +1426,25 @@ trap scm_ctrl_c INT
 if ! scm_find_exiftool >/dev/null; then
   echo "$(scm_ts) exiftool not found (set SCM_EXIFTOOL or install exiftool)." >&2
   exit 1
+fi
+
+# Subfolders below the chosen folders: ask once (unless -r was given).
+if (( ! RECURSIVE )); then
+  scm_scan_dirs=()
+  if (( ${#POSITIONALS[@]} == 0 )); then
+    scm_scan_dirs=(.)
+  else
+    for p in "${POSITIONALS[@]}"; do
+      [[ -d "$p" ]] && scm_scan_dirs+=("$p")
+    done
+  fi
+  if (( ${#scm_scan_dirs[@]} > 0 )); then
+    script_scan_subdirs scm_is_video_file "${scm_scan_dirs[@]}"
+    script_ask_include_subdirs "Run with -r to include them."
+    rc=$?
+    (( rc == 2 )) && exit 0
+    (( SCRIPT_INCLUDE_SUBDIRS )) && RECURSIVE=1
+  fi
 fi
 
 if (( ${#POSITIONALS[@]} == 0 )); then
