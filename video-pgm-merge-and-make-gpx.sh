@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261120.101000 - standalone gap list: "(next file)" names aligned in one column
 # v. 20261120.100500 - chapter plan: standalone clips show the gap to the next clip (seconds … days) and why they do not chain
 # v. 20261120.090500 - curl/df via SCRIPT_CURL_BIN / SCRIPT_DF_BIN (known path, else type -P)
 # v. 20261120.084500 - seam preview env via "$SCRIPT_ENV_BIN" (/bin/env, else /usr/bin/env, else type -P env)
@@ -8178,10 +8179,10 @@ print_group_plan() {
       base="${files[0]##*/}"
       (( ${#base} > sa_w )) && sa_w=${#base}
     done
+    # Pass 1: gap text and next name per clip (so the "(next)" column can be aligned).
+    local -a sa_gap_txts=() sa_next_names=()
+    local sa_gw=0
     for f in "${sa_files[@]}"; do
-      base="${f##*/}"
-      part=$(chapter_part_from_basename "$base" 2>/dev/null) || part=
-      cam=$(chapter_camera_from_basename "$base" 2>/dev/null) || cam=
       sa_next=""
       for (( sa_idx = 0; sa_idx < ${#sa_sorted[@]}; sa_idx++ )); do
         if [[ "${sa_sorted[sa_idx]}" == "$f" ]]; then
@@ -8194,16 +8195,31 @@ print_group_plan() {
       else
         sa_gap=$(pgm_clip_gap_to_next_sec "$f" "$sa_next" 2>/dev/null) || sa_gap=""
         if [[ -n "$sa_gap" ]]; then
-          sa_gap_txt="gap to next: $(pgm_gap_human "$sa_gap")  (${sa_next##*/})"
-          (( sa_gap < 0 )) && sa_gap_txt+="  [overlap]"
+          sa_gap_txt="gap to next: $(pgm_gap_human "$sa_gap")"
+          (( sa_gap < 0 )) && sa_gap_txt+=" [overlap]"
         else
-          sa_gap_txt="gap to next: unknown  (${sa_next##*/})"
+          sa_gap_txt="gap to next: unknown"
         fi
       fi
+      sa_gap_txts+=("$sa_gap_txt")
+      sa_next_names+=("${sa_next##*/}")
+      (( ${#sa_gap_txt} > sa_gw )) && sa_gw=${#sa_gap_txt}
+    done
+    # Pass 2: print with file names, gap texts and "(next file)" in fixed columns.
+    local sa_i
+    for (( sa_i = 0; sa_i < ${#sa_files[@]}; sa_i++ )); do
+      f="${sa_files[sa_i]}"
+      base="${f##*/}"
+      part=$(chapter_part_from_basename "$base" 2>/dev/null) || part=
+      cam=$(chapter_camera_from_basename "$base" 2>/dev/null) || cam=
       printf '      '
       [[ -n "$part" ]] && printf 'part %02d  ' "$part"
       [[ -n "$cam" ]] && printf '%s  ' "$cam"
-      printf '%-*s   %s\n' "$sa_w" "$base" "$sa_gap_txt"
+      if [[ -n "${sa_next_names[sa_i]}" ]]; then
+        printf '%-*s   %-*s  (%s)\n' "$sa_w" "$base" "$sa_gw" "${sa_gap_txts[sa_i]}" "${sa_next_names[sa_i]}"
+      else
+        printf '%-*s   %s\n' "$sa_w" "$base" "${sa_gap_txts[sa_i]}"
+      fi
     done
     echo "      Gap = start of the next clip minus the end of this clip. Contour clips chain when the gap is within ${PGM_CONTOUR_TIME_MAX_STOP_SEC:-12} s (up to ${PGM_CONTOUR_TIME_SUSPECT_MAX_STOP_SEC:-45} s is offered for review)."
     echo
