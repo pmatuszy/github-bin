@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261120.100500 - chapter plan: standalone clips show the gap to the next clip (seconds … days) and why they do not chain
 # v. 20261120.090500 - curl/df via SCRIPT_CURL_BIN / SCRIPT_DF_BIN (known path, else type -P)
 # v. 20261120.084500 - seam preview env via "$SCRIPT_ENV_BIN" (/bin/env, else /usr/bin/env, else type -P env)
 # v. 20261120.080900 - subfolders: ask at startup; folder arguments merge each folder in its own run (no mixing with files)
@@ -7908,6 +7909,37 @@ print_size_split_group_hint() {
   fi
 }
 
+# Seconds → "26 s", "3 min 12 s", "2 h 05 min", "3 d 4 h" (a leading "-" keeps the sign).
+pgm_gap_human() {
+  local s="$1" sign=""
+  [[ "$s" =~ ^-?[0-9]+$ ]] || return 1
+  if (( s < 0 )); then
+    sign="-"
+    s=$(( -s ))
+  fi
+  if (( s < 60 )); then
+    printf '%s%d s' "$sign" "$s"
+  elif (( s < 3600 )); then
+    printf '%s%d min %02d s' "$sign" $(( s / 60 )) $(( s % 60 ))
+  elif (( s < 86400 )); then
+    printf '%s%d h %02d min' "$sign" $(( s / 3600 )) $(( (s % 3600) / 60 ))
+  else
+    printf '%s%d d %d h' "$sign" $(( s / 86400 )) $(( (s % 86400) / 3600 ))
+  fi
+}
+
+# Prints next_start − (this_start + this_duration) in whole seconds; returns 1 when unknown.
+# Works for any file name (filename time, else media CreateDate), unlike the Contour-only helper.
+pgm_clip_gap_to_next_sec() {
+  local f="$1" nxt="$2" e1 e2 dur end
+  e1="$(pgm_hybrid_start_epoch "$f" 2>/dev/null)" || return 1
+  e2="$(pgm_hybrid_start_epoch "$nxt" 2>/dev/null)" || return 1
+  dur=$(ffprobe_duration_seconds "$f" 2>/dev/null) || dur=""
+  [[ -n "$dur" ]] || return 1
+  end=$(awk -v p="$e1" -v d="$dur" 'BEGIN { printf "%d", p + d + 0.5 }')
+  printf '%d\n' $(( e2 - end ))
+}
+
 print_group_plan() {
   local -a all_mp4=("$@")
   local gidx=0 mergeable=0 size_split_groups=0 contour_groups=0 contour_suspect_groups=0 part_groups=0 raw_gopro_groups=0 dashcam_groups=0 standalone=0
@@ -8127,17 +8159,53 @@ print_group_plan() {
   done
   if (( standalone > 0 )); then
     echo "Standalone (single chapter, will not merge):"
+    # Every clip in start-time order, so each standalone file can name its real next neighbour.
+    local -a sa_sorted=() sa_files=()
+    local sa_line sa_e sa_idx sa_next sa_gap sa_gap_txt sa_w=0
+    while IFS= read -r sa_line; do
+      sa_sorted+=("${sa_line#*|}")
+    done < <(
+      for f in "${all_mp4[@]}"; do
+        [[ "${f##*/}" == *_concat* ]] && continue
+        sa_e="$(pgm_hybrid_start_epoch "$f" 2>/dev/null)" || sa_e=0
+        printf '%s|%s\n' "$sa_e" "$f"
+      done | sort -t'|' -k1,1n -k2,2
+    )
     for blob in "${GROUP_BLOBS[@]}"; do
       group_files_to_array "$blob" files
       (( ${#files[@]} >= 2 )) && continue
+      sa_files+=("${files[0]}")
       base="${files[0]##*/}"
+      (( ${#base} > sa_w )) && sa_w=${#base}
+    done
+    for f in "${sa_files[@]}"; do
+      base="${f##*/}"
       part=$(chapter_part_from_basename "$base" 2>/dev/null) || part=
       cam=$(chapter_camera_from_basename "$base" 2>/dev/null) || cam=
+      sa_next=""
+      for (( sa_idx = 0; sa_idx < ${#sa_sorted[@]}; sa_idx++ )); do
+        if [[ "${sa_sorted[sa_idx]}" == "$f" ]]; then
+          sa_next="${sa_sorted[sa_idx + 1]:-}"
+          break
+        fi
+      done
+      if [[ -z "$sa_next" ]]; then
+        sa_gap_txt="no later clip in this folder"
+      else
+        sa_gap=$(pgm_clip_gap_to_next_sec "$f" "$sa_next" 2>/dev/null) || sa_gap=""
+        if [[ -n "$sa_gap" ]]; then
+          sa_gap_txt="gap to next: $(pgm_gap_human "$sa_gap")  (${sa_next##*/})"
+          (( sa_gap < 0 )) && sa_gap_txt+="  [overlap]"
+        else
+          sa_gap_txt="gap to next: unknown  (${sa_next##*/})"
+        fi
+      fi
       printf '      '
       [[ -n "$part" ]] && printf 'part %02d  ' "$part"
       [[ -n "$cam" ]] && printf '%s  ' "$cam"
-      printf '%s\n' "$base"
+      printf '%-*s   %s\n' "$sa_w" "$base" "$sa_gap_txt"
     done
+    echo "      Gap = start of the next clip minus the end of this clip. Contour clips chain when the gap is within ${PGM_CONTOUR_TIME_MAX_STOP_SEC:-12} s (up to ${PGM_CONTOUR_TIME_SUSPECT_MAX_STOP_SEC:-45} s is offered for review)."
     echo
   fi
   print_orphan_concat_section "${all_mp4[@]}"
