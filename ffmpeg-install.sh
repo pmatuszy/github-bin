@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261120.084500 - run_env via "$SCRIPT_ENV_BIN" (/bin/env, else /usr/bin/env, else type -P env)
 # v. 20261024.165427 - SVT-AV1: use installable libsvtav1enc-dev or libsvtav1-dev; retry the other on apt failure
 # v. 20261024.165046 - install libsvtav1enc-dev when libsvtav1-dev has no candidate
 # v. 20261010.174933 - --install-build-deps installs gcc, make, and compile libraries
@@ -742,7 +743,7 @@ versioned_tool_bin() {
 }
 
 run_env() {
-    /bin/env "$@"
+    "$SCRIPT_ENV_BIN" "$@"
 }
 
 probe_tool_version_output() {

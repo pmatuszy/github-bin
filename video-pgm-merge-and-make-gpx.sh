@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261120.084500 - seam preview env via "$SCRIPT_ENV_BIN" (/bin/env, else /usr/bin/env, else type -P env)
 # v. 20261120.080900 - subfolders: ask at startup; folder arguments merge each folder in its own run (no mixing with files)
 # v. 20261119.225500 - ffmpeg concat: timelapse-style progress bar with "file N of M", no raw stats line
 # v. 20261118.145300 - bare Contour merge fallback label is Contour+2 Camera (was Contour)
@@ -2212,11 +2213,11 @@ find_video_pgm_play_terminal() {
 
 # Run play-terminal without re-printing this merge script's figlet/version banner.
 # Seal re-exec exports SCRIPT_SELF_* into the environment; clear those so the child is itself.
-# Always /bin/env — never bare env (PGM interactive shells define an env function).
+# Always "$SCRIPT_ENV_BIN" — never bare env (PGM interactive shells define an env function).
 run_video_pgm_play_terminal() {
   local player="$1"
   shift
-  /bin/env -u SCRIPT_SELF_SEALED -u SCRIPT_SELF_LIVE_PATH -u SCRIPT_SELF_SEAL_TMP \
+  "$SCRIPT_ENV_BIN" -u SCRIPT_SELF_SEALED -u SCRIPT_SELF_LIVE_PATH -u SCRIPT_SELF_SEAL_TMP \
     SCRIPT_HEADER_QUIET=1 \
     "$player" "$@"
 }

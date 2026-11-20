@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261120.084500 - run_exiftool via "$SCRIPT_ENV_BIN" (/bin/env, else /usr/bin/env, else type -P env)
 # v. 20261117.091500 - run_exiftool: always /bin/env (never bare env)
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260805.091802 - install/reinstall prompts: show [q] quit in [y/N/q] and [Y/n/q]
@@ -143,8 +144,8 @@ EOF
 run_exiftool() {
     local lc
     lc="$(exiftool_pick_locale)"
-    # Always /bin/env — interactive PGM shells define a bash function named env.
-    /bin/env LC_ALL="$lc" LANG="$lc" LANGUAGE= "$@"
+    # Always "$SCRIPT_ENV_BIN" — interactive PGM shells define a bash function named env.
+    "$SCRIPT_ENV_BIN" LC_ALL="$lc" LANG="$lc" LANGUAGE= "$@"
 }
 
 as_root_check() {

@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261120.084500 - remote ssh via "$SCRIPT_ENV_BIN" (/bin/env, else /usr/bin/env, else type -P env)
 # v. 20261117.091500 - remote ssh: call /bin/env (not bare env; PGM env function)
 # v. 20260921.114432 - remote cycle every 10 min again (SSH_KEYCHAIN_DAEMON_SLEEP default 600)
 # v. 20260916.115600 - drop red/yellow coloring; only OK lines are green, problems use plain text
@@ -161,13 +162,13 @@ skd_read_host_list() {
 
 # Pass 1: no secret leaves this machine. ssh-keychain.sh exits non-zero when not all
 # keys are loaded there, which is our signal that the host was restarted.
-# /bin/env -u: our SSH_ASKPASS helper prints the key passphrase, so ssh must never be
+# "$SCRIPT_ENV_BIN" -u: our SSH_ASKPASS helper prints the key passphrase, so ssh must never be
 # able to use it to answer a remote password prompt. BatchMode=yes on top of that.
 skd_remote_check() {
   local host="$1"
 
   timeout --kill-after=10 "${REMOTE_TIMEOUT}" \
-    /bin/env -u SSH_ASKPASS -u SSH_ASKPASS_REQUIRE -u DISPLAY -u PASSWD \
+    "$SCRIPT_ENV_BIN" -u SSH_ASKPASS -u SSH_ASKPASS_REQUIRE -u DISPLAY -u PASSWD \
       ssh -n -T -o BatchMode=yes -o ConnectTimeout="${CONNECT_TIMEOUT}" \
              -o ServerAliveInterval=10 -o ServerAliveCountMax=3 \
              "${host}" "${REMOTE_CMD}" 2>&1 | sed "s/^/    [${host}] /"
@@ -204,7 +205,7 @@ skd_remote_load_keys() {
 
   skd_remote_bootstrap_script \
     | timeout --kill-after=10 "${REMOTE_TIMEOUT}" \
-        /bin/env -u SSH_ASKPASS -u SSH_ASKPASS_REQUIRE -u DISPLAY -u PASSWD \
+        "$SCRIPT_ENV_BIN" -u SSH_ASKPASS -u SSH_ASKPASS_REQUIRE -u DISPLAY -u PASSWD \
           ssh -T -o BatchMode=yes -o ConnectTimeout="${CONNECT_TIMEOUT}" \
                  -o ServerAliveInterval=10 -o ServerAliveCountMax=3 \
                  "${host}" 'bash -s' 2>&1 | sed "s/^/    [${host}] /"

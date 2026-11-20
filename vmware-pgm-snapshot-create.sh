@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261120.084500 - vmrun via "$SCRIPT_ENV_BIN" (/bin/env, else /usr/bin/env, else type -P env)
 # v. 20261006.183955 - disk listing uses /bin/df so a shell df function cannot hide the byte count
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
@@ -464,7 +465,7 @@ echo
 echo "(PGM) Existing snapshots (vmrun listSnapshots) …"
 list_exist_rc=0
 if [[ -n "${PGM_VMRUN_ENC_PASS:-}" ]]; then
-  list_exist_out=$(/bin/env -u TPM_PASS DISPLAY="$_pgm_ed" "${VMRUN_PREFIX[@]}" -vp "$PGM_VMRUN_ENC_PASS" listSnapshots "$selected" 2>&1) || list_exist_rc=$?
+  list_exist_out=$("$SCRIPT_ENV_BIN" -u TPM_PASS DISPLAY="$_pgm_ed" "${VMRUN_PREFIX[@]}" -vp "$PGM_VMRUN_ENC_PASS" listSnapshots "$selected" 2>&1) || list_exist_rc=$?
 else
   list_exist_out=$("${VMRUN_PREFIX[@]}" listSnapshots "$selected" nogui 2>&1) || list_exist_rc=$?
 fi
@@ -512,8 +513,8 @@ echo "  Name:     $snap_name"
 echo
 echo "(PGM) Command to run:"
 if [[ -n "${PGM_VMRUN_ENC_PASS:-}" ]]; then
-  vm_cmd=(/bin/env -u TPM_PASS DISPLAY="$_pgm_ed" "${VMRUN_PREFIX[@]}" -vp "$PGM_VMRUN_ENC_PASS" snapshot "$selected" "$snap_name")
-  printf '  %s\n' "/bin/env -u TPM_PASS DISPLAY=$(printf '%q' "$_pgm_ed") ${VMRUN_PREFIX[*]} -vp <PGM_VMRUN_ENC_PASS> snapshot $(printf '%q' "$selected") $(printf '%q' "$snap_name")"
+  vm_cmd=("$SCRIPT_ENV_BIN" -u TPM_PASS DISPLAY="$_pgm_ed" "${VMRUN_PREFIX[@]}" -vp "$PGM_VMRUN_ENC_PASS" snapshot "$selected" "$snap_name")
+  printf '  %s\n' "${SCRIPT_ENV_BIN} -u TPM_PASS DISPLAY=$(printf '%q' "$_pgm_ed") ${VMRUN_PREFIX[*]} -vp <PGM_VMRUN_ENC_PASS> snapshot $(printf '%q' "$selected") $(printf '%q' "$snap_name")"
 else
   vm_cmd=("${VMRUN_PREFIX[@]}" snapshot "$selected" "$snap_name" nogui)
   printf '  %s\n' "${VMRUN_PREFIX[*]} snapshot $(printf '%q' "$selected") $(printf '%q' "$snap_name") nogui"

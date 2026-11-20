@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261120.084500 - vmrun via "$SCRIPT_ENV_BIN" (/bin/env, else /usr/bin/env, else type -P env)
 # v. 20261006.183955 - disk listing uses /bin/df so a shell df function cannot hide the byte count
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.164840 - add -h/--help, -v/--version, --no_startup_delay
@@ -361,7 +362,7 @@ _pgm_print_remaining_snapshots_for_vmx() {
 
   list_r=0
   if [[ -n "${PGM_VMRUN_ENC_PASS:-}" ]]; then
-    list_o=$(/bin/env -u TPM_PASS DISPLAY="$_pgm_ed" "${VMRUN_PREFIX[@]}" -vp "$PGM_VMRUN_ENC_PASS" listSnapshots "$vmx" 2>&1) || list_r=$?
+    list_o=$("$SCRIPT_ENV_BIN" -u TPM_PASS DISPLAY="$_pgm_ed" "${VMRUN_PREFIX[@]}" -vp "$PGM_VMRUN_ENC_PASS" listSnapshots "$vmx" 2>&1) || list_r=$?
   else
     list_o=$("${VMRUN_PREFIX[@]}" listSnapshots "$vmx" nogui 2>&1) || list_r=$?
   fi
@@ -502,7 +503,7 @@ echo
 echo "(PGM) Listing snapshots (vmrun listSnapshots) …"
 list_rc=0
 if [[ -n "${PGM_VMRUN_ENC_PASS:-}" ]]; then
-  list_out=$(/bin/env -u TPM_PASS DISPLAY="$_pgm_ed" "${VMRUN_PREFIX[@]}" -vp "$PGM_VMRUN_ENC_PASS" listSnapshots "$selected" 2>&1) || list_rc=$?
+  list_out=$("$SCRIPT_ENV_BIN" -u TPM_PASS DISPLAY="$_pgm_ed" "${VMRUN_PREFIX[@]}" -vp "$PGM_VMRUN_ENC_PASS" listSnapshots "$selected" 2>&1) || list_rc=$?
 else
   list_out=$("${VMRUN_PREFIX[@]}" listSnapshots "$selected" nogui 2>&1) || list_rc=$?
 fi
@@ -563,8 +564,8 @@ echo "  Snapshot:     $snap_del"
 echo
 echo "(PGM) Command to run:"
 if [[ -n "${PGM_VMRUN_ENC_PASS:-}" ]]; then
-  vm_cmd=(/bin/env -u TPM_PASS DISPLAY="$_pgm_ed" "${VMRUN_PREFIX[@]}" -vp "$PGM_VMRUN_ENC_PASS" deleteSnapshot "$selected" "$snap_del")
-  printf '  %s\n' "/bin/env -u TPM_PASS DISPLAY=$(printf '%q' "$_pgm_ed") ${VMRUN_PREFIX[*]} -vp <PGM_VMRUN_ENC_PASS> deleteSnapshot $(printf '%q' "$selected") $(printf '%q' "$snap_del")"
+  vm_cmd=("$SCRIPT_ENV_BIN" -u TPM_PASS DISPLAY="$_pgm_ed" "${VMRUN_PREFIX[@]}" -vp "$PGM_VMRUN_ENC_PASS" deleteSnapshot "$selected" "$snap_del")
+  printf '  %s\n' "${SCRIPT_ENV_BIN} -u TPM_PASS DISPLAY=$(printf '%q' "$_pgm_ed") ${VMRUN_PREFIX[*]} -vp <PGM_VMRUN_ENC_PASS> deleteSnapshot $(printf '%q' "$selected") $(printf '%q' "$snap_del")"
 else
   vm_cmd=("${VMRUN_PREFIX[@]}" deleteSnapshot "$selected" "$snap_del" nogui)
   printf '  %s\n' "${VMRUN_PREFIX[*]} deleteSnapshot $(printf '%q' "$selected") $(printf '%q' "$snap_del") nogui"

@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261120.084500 - vmrun via "$SCRIPT_ENV_BIN" (/bin/env, else /usr/bin/env, else type -P env)
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260718.081500 - end-of-run summary: how many VMs still running
 
@@ -196,7 +197,7 @@ _pgm_vmrun_suspend() {
   local rc=0
 
   if _pgm_vmx_likely_encrypted "$vmx" && [[ -n "${PGM_VMRUN_ENC_PASS:-}" ]]; then
-    /bin/env -u TPM_PASS DISPLAY="$_pgm_ed" "${VMRUN_PREFIX[@]}" -vp "$PGM_VMRUN_ENC_PASS" suspend "$vmx" nogui
+    "$SCRIPT_ENV_BIN" -u TPM_PASS DISPLAY="$_pgm_ed" "${VMRUN_PREFIX[@]}" -vp "$PGM_VMRUN_ENC_PASS" suspend "$vmx" nogui
     rc=$?
   else
     "${VMRUN_PREFIX[@]}" suspend "$vmx" nogui

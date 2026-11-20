@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261120.084500 - apcaccess via "$SCRIPT_ENV_BIN" (/bin/env, else /usr/bin/env, else type -P env)
 # v. 20261117.091500 - call apcaccess via /bin/env (not /usr/bin/env)
 # v. 20260811.095711 - add --history (paged changelog via _script_header.sh print_script_history)
 # v. 20260716.163224 - versioning format v. YYYYMMDD.HH24MISS
@@ -50,11 +51,11 @@ fi
 check_if_installed apcupsd
 
 # spr. czy nie ma bledow
-if [ $(/bin/env apcaccess | egrep "STATUS   : ONLINE *$"|wc -l) -eq 0 ];then
-  m=$( echo "${SCRIPT_VERSION}";echo ;/bin/env apcaccess 2>&1)
+if [ $("$SCRIPT_ENV_BIN" apcaccess | egrep "STATUS   : ONLINE *$"|wc -l) -eq 0 ];then
+  m=$( echo "${SCRIPT_VERSION}";echo ;"$SCRIPT_ENV_BIN" apcaccess 2>&1)
   /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL"/fail 2>/dev/null
 else
-  m=$(echo "${SCRIPT_VERSION}";echo ; /bin/env apcaccess 2>&1| egrep "STATUS   : ONLINE *")
+  m=$(echo "${SCRIPT_VERSION}";echo ; "$SCRIPT_ENV_BIN" apcaccess 2>&1| egrep "STATUS   : ONLINE *")
   /usr/bin/curl -fsS -m 100 --retry 10 --retry-delay 10 --data-raw "$m" -o /dev/null "$HEALTHCHECK_URL" 2>/dev/null
 fi
 

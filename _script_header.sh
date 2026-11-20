@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261120.084500 - SCRIPT_ENV_BIN: /bin/env, else /usr/bin/env, else type -P env (scripts must not hard-code /bin/env)
 # v. 20261120.080900 - script_scan_subdirs / script_ask_include_subdirs for subfolder questions at startup
 # v. 20261117.155100 - tighter startup: one blank after version box; ask_colors no extra blank
 # v. 20261117.084500 - SCRIPT_HEADER_QUIET=1 skips figlet / Interactive / version box
@@ -145,6 +146,28 @@ CALLER_SCRIPT="$(_script_header_resolve_caller_script)"
 export CALLER_SCRIPT
 CALLER_SCRIPT_BASENAME="$(basename "$CALLER_SCRIPT")"
 export CALLER_SCRIPT_BASENAME
+
+# Path of the env binary (never bare "env": interactive PGM shells define an env function).
+# Order: /bin/env, /usr/bin/env, then type -P env (ignores functions/aliases).
+# Scripts call it as: "$SCRIPT_ENV_BIN" VAR=value ... command
+script_resolve_env_bin() {
+  local p
+  for p in /bin/env /usr/bin/env; do
+    if [[ -x "$p" && ! -d "$p" ]]; then
+      SCRIPT_ENV_BIN="$p"
+      return 0
+    fi
+  done
+  p="$(type -P env 2>/dev/null || true)"
+  if [[ -n "$p" && -x "$p" ]]; then
+    SCRIPT_ENV_BIN="$p"
+    return 0
+  fi
+  SCRIPT_ENV_BIN=/usr/bin/env
+  echo "WARNING: no env binary found (/bin/env, /usr/bin/env, type -P env); commands that need it will fail." >&2
+  return 1
+}
+script_resolve_env_bin || true
 
 # Seal early (before banners / random delay) so an in-place overwrite of the live
 # caller cannot splice bash's remaining source reads. Re-execs once from a temp copy.
