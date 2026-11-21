@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261121.124500 - decide menu: [z] change batch size (extends or shortens the current decide round)
 # v. 20261121.102400 - empty Make/Model/Comment show as (empty); [a] on empty file = apply this + later empties (still ask when tags exist)
 # v. 20261120.080900 - ask at startup whether to include subfolders (-r still includes them without asking)
 # v. 20261116.225400 - Processing / apply boxes show absolute Directory + file name
@@ -106,6 +107,7 @@ the batch's questions:
   [Y] Apply this file (default)
   [a] Apply this file and every later empty file (still ask when tags exist)
   [b] Begin apply now — write answers so far; ask the rest late
+  [z] Change batch size (extends or shortens this decide round)
   [n] Skip this file
   [q] Quit (abandons unapplied plans for the current batch)
 
@@ -116,6 +118,7 @@ the batch's questions:
   [a] Overwrite this and every later file that differs
   [K] Keep existing tags for the rest of this run (only tag fully empty files)
   [b] Begin apply now — write answers so far; ask the rest late
+  [z] Change batch size (extends or shortens this decide round)
   [n] Skip this file
   [q] Quit (abandons unapplied plans for the current batch)
 
@@ -950,19 +953,21 @@ scm_decide_file() {
       "a|Overwrite this and every later file that differs"
       "R|Keep existing tags for the rest of this run (only tag fully empty files)"
       "b|Begin apply now — write answers so far; ask remaining files later"
+      "z|Change batch size (currently ${BATCH_SIZE})"
       "n|Skip this file"
       "q|Quit (abandon this batch's pending writes)"
     )
-    keys="$(scm_keys "$def" y m k a K b n q)"
+    keys="$(scm_keys "$def" y m k a K b z n q)"
   else
     menu_opts=(
       "y|Apply this file"
       "a|Apply this file and every later empty file (still ask when tags exist)"
       "b|Begin apply now — write answers so far; ask remaining files later"
+      "z|Change batch size (currently ${BATCH_SIZE})"
       "n|Skip this file"
       "q|Quit (abandon this batch's pending writes)"
     )
-    keys="$(scm_keys "$def" y a b n q)"
+    keys="$(scm_keys "$def" y a b z n q)"
   fi
 
   if declare -F script_print_question >/dev/null 2>&1; then
@@ -1002,6 +1007,25 @@ scm_decide_file() {
         scm_print_selected "b = Begin apply now (answers so far)"
         echo "$(scm_ts) Stopping decide early — will apply ${#PLAN_PATHS[@]} queued write(s); this file and later ones stay for the next decide round."
         return 3
+        ;;
+      z)
+        scm_print_selected "z = Change batch size"
+        scm_prompt_change_batch_size
+        local _zi _zitem
+        for _zi in "${!menu_opts[@]}"; do
+          _zitem="${menu_opts[_zi]}"
+          if [[ "${_zitem%%|*}" == z ]]; then
+            menu_opts[_zi]="z|Change batch size (currently ${BATCH_SIZE})"
+            break
+          fi
+        done
+        if declare -F script_print_question >/dev/null 2>&1; then
+          script_print_question "Set camera metadata (question ${SCM_Q_BATCH_POS}/${SCM_Q_BATCH_TOTAL}):"
+        else
+          echo "Set camera metadata (question ${SCM_Q_BATCH_POS}/${SCM_Q_BATCH_TOTAL}):"
+        fi
+        echo
+        continue
         ;;
       y)
         if (( has_existing )); then
@@ -1237,6 +1261,52 @@ scm_ask_batch_size() {
     echo "$(scm_ts) Enter a positive integer (or press Enter for ${def})."
   done
   scm_print_selected "batch size ${BATCH_SIZE}"
+}
+
+# After BATCH_SIZE changes mid-decide: refresh question X of Y for the current batch.
+scm_refresh_batch_question_totals() {
+  local start max_in_batch
+  [[ -n "${SCM_Q_OVERALL_POS:-}" && -n "${SCM_Q_BATCH_POS:-}" && -n "${SCM_Q_OVERALL_TOTAL:-}" ]] || return 0
+  (( BATCH_SIZE > 0 )) || return 0
+  start=$(( SCM_Q_OVERALL_POS - SCM_Q_BATCH_POS + 1 ))
+  max_in_batch=$(( SCM_Q_OVERALL_TOTAL - start + 1 ))
+  (( max_in_batch < 1 )) && max_in_batch=1
+  SCM_Q_BATCH_TOTAL=$BATCH_SIZE
+  (( SCM_Q_BATCH_TOTAL > max_in_batch )) && SCM_Q_BATCH_TOTAL=$max_in_batch
+  (( SCM_Q_BATCH_TOTAL < SCM_Q_BATCH_POS )) && SCM_Q_BATCH_TOTAL=$SCM_Q_BATCH_POS
+}
+
+# Prompt for a new BATCH_SIZE during a per-file question. Caller continues the same prompt.
+scm_prompt_change_batch_size() {
+  local def input rem start
+  start=$(( SCM_Q_OVERALL_POS - SCM_Q_BATCH_POS + 1 ))
+  rem=$(( SCM_Q_OVERALL_TOTAL - start + 1 ))
+  def="$BATCH_SIZE"
+  (( def < 1 )) && def="$(scm_default_batch_size_for_count "$rem")"
+  echo
+  echo "$(scm_ts) Current batch size: ${BATCH_SIZE}"
+  echo "  Files from the start of this batch to the end of the run: ${rem}"
+  echo "  Larger → keep deciding in this round. Smaller → apply sooner (after this file if you are already past the new size)."
+  while true; do
+    printf '%s New batch size [%s]: ' "$(scm_ts)" "$def"
+    scm_prompt_wait_begin
+    read -r input || input=""
+    scm_prompt_wait_end
+    input="${input%"${input##*[![:space:]]}"}"
+    input="${input#"${input%%[![:space:]]*}"}"
+    if [[ -z "$input" ]]; then
+      BATCH_SIZE="$def"
+      break
+    fi
+    if [[ "$input" =~ ^[1-9][0-9]*$ ]]; then
+      BATCH_SIZE="$input"
+      break
+    fi
+    echo "$(scm_ts) Enter a positive integer (or press Enter for ${def})."
+  done
+  scm_print_selected "batch size ${BATCH_SIZE}"
+  scm_refresh_batch_question_totals
+  echo "$(scm_ts) Batch size is now ${BATCH_SIZE} (this round: question ${SCM_Q_BATCH_POS}/${SCM_Q_BATCH_TOTAL})."
 }
 
 scm_print_summary() {
@@ -1541,14 +1611,21 @@ while (( file_i < ACTIONABLE_COUNT )); do
   echo
   scm_rule
   echo "$(scm_ts) Batch ${batch_i}: files $((file_i + 1))–${batch_end} of ${ACTIONABLE_COUNT} needing a decision — decide (${batch_count} file(s))"
-  echo "$(scm_ts) Tip: press [b] during a prompt to apply answers so far and ask the rest later."
+  echo "$(scm_ts) Tip: [b] apply answers so far; [z] change batch size (extends or shortens this round)."
   scm_rule
   SCM_Q_BATCH_NUM=$batch_i
   SCM_Q_BATCH_TOTAL=$batch_count
   SCM_Q_OVERALL_TOTAL=$ACTIONABLE_COUNT
   early_apply=0
   next_file_i=$batch_end
-  for (( j = file_i; j < batch_end; j++ )); do
+  j=$file_i
+  # Re-read BATCH_SIZE each time so [z] can extend or shorten this decide round.
+  while (( j < ACTIONABLE_COUNT )); do
+    batch_end=$((file_i + BATCH_SIZE))
+    (( batch_end > ACTIONABLE_COUNT )) && batch_end=$ACTIONABLE_COUNT
+    (( j >= batch_end )) && break
+    batch_count=$((batch_end - file_i))
+    SCM_Q_BATCH_TOTAL=$batch_count
     SCM_Q_BATCH_POS=$((j - file_i + 1))
     SCM_Q_OVERALL_POS=$((j + 1))
     scm_decide_file "${ACTIONABLE[j]}"
@@ -1563,6 +1640,8 @@ while (( file_i < ACTIONABLE_COUNT )); do
       next_file_i=$j
       break
     fi
+    (( j++ )) || true
+    next_file_i=$j
   done
   if (( quit_run )); then
     break

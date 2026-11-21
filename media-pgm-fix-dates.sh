@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261121.124500 - decide menu: [z] change batch size (extends or shortens the current decide round)
 # v. 20261121.102700 - File name date: accept leading YYYYMMDD without HHMMSS (e.g. 20150201_NVenc_….mp4 → 00:00:00)
 # v. 20261120.080900 - ask at startup whether to include subfolders (-r still includes them without asking)
 # v. 20261116.225400 - Processing / apply boxes show absolute Directory + file name
@@ -164,6 +165,7 @@ questions:
                        file in this run (no more prompts).
   b                    Begin apply now — write answers so far; ask the rest
                        of this batch later.
+  z                    Change batch size (extends or shortens this decide round).
   s                    Skip this file.
   q                    Quit (abandons unapplied plans for the current batch).
 
@@ -1566,13 +1568,14 @@ mfd_decide_file() {
   menu_opts+=(
     "k|Keep as written for the rest of this run"
     "b|Begin apply now — write answers so far; ask remaining files later"
+    "z|Change batch size (currently ${BATCH_SIZE})"
     "s|Skip this file"
     "q|Quit (abandon this batch's pending writes)"
   )
   if [[ -n "${MFD_CONTOUR_START_E:-}" && -n "${MFD_CONTOUR_END_E:-}" ]]; then
-    key_list+=(a c k b s q)
+    key_list+=(a c k b z s q)
   else
-    key_list+=(a k b s q)
+    key_list+=(a k b z s q)
   fi
   prompt_keys="$(mfd_keys "$MFD_DEFAULT_KEY" "${key_list[@]}")"
   prompt_extra=""
@@ -1620,6 +1623,26 @@ mfd_decide_file() {
         mfd_print_selected "b = Begin apply now (answers so far)"
         echo "$(mfd_ts) Stopping decide early — will apply ${#PLAN_PATH[@]} queued fix(es); this file and later ones stay for the next decide round."
         return 3
+        ;;
+      z)
+        mfd_print_selected "z = Change batch size"
+        mfd_prompt_change_batch_size
+        # Rebuild the [z] label with the new size, then ask this file again.
+        local _zi _zitem
+        for _zi in "${!menu_opts[@]}"; do
+          _zitem="${menu_opts[_zi]}"
+          if [[ "${_zitem%%|*}" == z ]]; then
+            menu_opts[_zi]="z|Change batch size (currently ${BATCH_SIZE})"
+            break
+          fi
+        done
+        if declare -F script_print_question >/dev/null 2>&1; then
+          script_print_question "Fix dates (question ${MFD_Q_BATCH_POS}/${MFD_Q_BATCH_TOTAL}):"
+        else
+          echo "Fix dates (question ${MFD_Q_BATCH_POS}/${MFD_Q_BATCH_TOTAL}):"
+        fi
+        echo
+        continue
         ;;
       s)
         mfd_print_selected "s = Skip this file"
@@ -1815,6 +1838,52 @@ mfd_ask_batch_size() {
     echo "$(mfd_ts) Enter a positive integer (or press Enter for ${def})."
   done
   mfd_print_selected "batch size ${BATCH_SIZE}"
+}
+
+# After BATCH_SIZE changes mid-decide: refresh question X of Y for the current batch.
+mfd_refresh_batch_question_totals() {
+  local start max_in_batch
+  [[ -n "${MFD_Q_OVERALL_POS:-}" && -n "${MFD_Q_BATCH_POS:-}" && -n "${MFD_Q_OVERALL_TOTAL:-}" ]] || return 0
+  (( BATCH_SIZE > 0 )) || return 0
+  start=$(( MFD_Q_OVERALL_POS - MFD_Q_BATCH_POS + 1 ))
+  max_in_batch=$(( MFD_Q_OVERALL_TOTAL - start + 1 ))
+  (( max_in_batch < 1 )) && max_in_batch=1
+  MFD_Q_BATCH_TOTAL=$BATCH_SIZE
+  (( MFD_Q_BATCH_TOTAL > max_in_batch )) && MFD_Q_BATCH_TOTAL=$max_in_batch
+  (( MFD_Q_BATCH_TOTAL < MFD_Q_BATCH_POS )) && MFD_Q_BATCH_TOTAL=$MFD_Q_BATCH_POS
+}
+
+# Prompt for a new BATCH_SIZE during a per-file question. Caller continues the same prompt.
+mfd_prompt_change_batch_size() {
+  local def input rem start
+  start=$(( MFD_Q_OVERALL_POS - MFD_Q_BATCH_POS + 1 ))
+  rem=$(( MFD_Q_OVERALL_TOTAL - start + 1 ))
+  def="$BATCH_SIZE"
+  (( def < 1 )) && def="$(mfd_default_batch_size_for_count "$rem")"
+  echo
+  echo "$(mfd_ts) Current batch size: ${BATCH_SIZE}"
+  echo "  Files from the start of this batch to the end of the run: ${rem}"
+  echo "  Larger → keep deciding in this round. Smaller → apply sooner (after this file if you are already past the new size)."
+  while true; do
+    printf '%s New batch size [%s]: ' "$(mfd_ts)" "$def"
+    mfd_prompt_wait_begin
+    read -r input || input=""
+    mfd_prompt_wait_end
+    input="${input%"${input##*[![:space:]]}"}"
+    input="${input#"${input%%[![:space:]]*}"}"
+    if [[ -z "$input" ]]; then
+      BATCH_SIZE="$def"
+      break
+    fi
+    if [[ "$input" =~ ^[1-9][0-9]*$ ]]; then
+      BATCH_SIZE="$input"
+      break
+    fi
+    echo "$(mfd_ts) Enter a positive integer (or press Enter for ${def})."
+  done
+  mfd_print_selected "batch size ${BATCH_SIZE}"
+  mfd_refresh_batch_question_totals
+  echo "$(mfd_ts) Batch size is now ${BATCH_SIZE} (this round: question ${MFD_Q_BATCH_POS}/${MFD_Q_BATCH_TOTAL})."
 }
 
 # --- options ---
@@ -2030,14 +2099,21 @@ while (( file_i < ACTIONABLE_COUNT )); do
   echo
   mfd_rule
   echo "$(mfd_ts) Batch ${batch_i}: files $((file_i + 1))–${batch_end} of ${ACTIONABLE_COUNT} needing a decision — decide (${batch_count} file(s))"
-  echo "$(mfd_ts) Tip: press [b] during a prompt to apply answers so far and ask the rest later."
+  echo "$(mfd_ts) Tip: [b] apply answers so far; [z] change batch size (extends or shortens this round)."
   mfd_rule
   MFD_Q_BATCH_NUM=$batch_i
   MFD_Q_BATCH_TOTAL=$batch_count
   MFD_Q_OVERALL_TOTAL=$ACTIONABLE_COUNT
   early_apply=0
   next_file_i=$batch_end
-  for (( j = file_i; j < batch_end; j++ )); do
+  j=$file_i
+  # Re-read BATCH_SIZE each time so [z] can extend or shorten this decide round.
+  while (( j < ACTIONABLE_COUNT )); do
+    batch_end=$((file_i + BATCH_SIZE))
+    (( batch_end > ACTIONABLE_COUNT )) && batch_end=$ACTIONABLE_COUNT
+    (( j >= batch_end )) && break
+    batch_count=$((batch_end - file_i))
+    MFD_Q_BATCH_TOTAL=$batch_count
     MFD_Q_BATCH_POS=$((j - file_i + 1))
     MFD_Q_OVERALL_POS=$((j + 1))
     mfd_decide_file "${ACTIONABLE[j]}"
@@ -2051,6 +2127,8 @@ while (( file_i < ACTIONABLE_COUNT )); do
       next_file_i=$j
       break
     fi
+    (( j++ )) || true
+    next_file_i=$j
   done
   if (( quit_run )); then
     break
