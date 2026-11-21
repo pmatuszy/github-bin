@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261121.102700 - File name date: accept leading YYYYMMDD without HHMMSS (e.g. 20150201_NVenc_….mp4 → 00:00:00)
 # v. 20261120.080900 - ask at startup whether to include subfolders (-r still includes them without asking)
 # v. 20261116.225400 - Processing / apply boxes show absolute Directory + file name
 # v. 20261116.215000 - Fix dates menu: align label and date columns
@@ -698,6 +699,10 @@ mfd_filename_epoch_from_basename() {
   elif [[ "$base" =~ ([0-9]{4})-([0-9]{2})-([0-9]{2})[[:space:]_-]([0-9]{2})[._-]([0-9]{2})[._-]([0-9]{2}) ]]; then
     d="${BASH_REMATCH[1]}${BASH_REMATCH[2]}${BASH_REMATCH[3]}"
     t="${BASH_REMATCH[4]}${BASH_REMATCH[5]}${BASH_REMATCH[6]}"
+  # Date only: YYYYMMDD at start (e.g. 20150201_NVenc_….mp4) — time unknown → 00:00:00
+  elif [[ "$base" =~ ^([0-9]{8})([_.-]|$) ]]; then
+    d="${BASH_REMATCH[1]}"
+    t="000000"
   else
     return 1
   fi
