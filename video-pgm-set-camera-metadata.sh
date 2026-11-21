@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261121.102400 - empty Make/Model/Comment show as (empty); [a] on empty file = apply this + later empties (still ask when tags exist)
 # v. 20261120.080900 - ask at startup whether to include subfolders (-r still includes them without asking)
 # v. 20261116.225400 - Processing / apply boxes show absolute Directory + file name
 # v. 20261116.160500 - camera profile + decide menus use shared script_arrow_menu
@@ -103,7 +104,7 @@ Interactive keys (per file, when not -y) — decisions only; writes run afte
 the batch's questions:
   Empty tags:
   [Y] Apply this file (default)
-  [a] Overwrite/apply this and every later file
+  [a] Apply this file and every later empty file (still ask when tags exist)
   [b] Begin apply now — write answers so far; ask the rest late
   [n] Skip this file
   [q] Quit (abandons unapplied plans for the current batch)
@@ -411,7 +412,7 @@ scm_merged_changes_anything() {
 scm_disp_tag() {
   local v="$1"
   if [[ -z "$v" ]]; then
-    printf 'n/a\n'
+    printf '(empty)\n'
   else
     printf '%s\n' "$v"
   fi
@@ -916,6 +917,14 @@ scm_decide_file() {
     return 0
   fi
 
+  # Rest-of-run: auto-fill fully empty files; still ask when tags already exist.
+  if (( ALWAYS_APPLY_EMPTY )) && (( ! has_existing )); then
+    scm_print_tag_plan "$f"
+    echo "$(scm_ts) Queued (empty file): ${f##*/}"
+    scm_queue_write "$f" "$SCM_WANT_MAKE" "$SCM_WANT_MODEL" "$SCM_WANT_COMMENT" "empty file"
+    return 0
+  fi
+
   # -y / non-interactive: safe — only tag fully empty; keep differing existing tags.
   if (( DO_YES )) || (( ! script_is_run_interactively )); then
     scm_print_tag_plan "$f"
@@ -948,7 +957,7 @@ scm_decide_file() {
   else
     menu_opts=(
       "y|Apply this file"
-      "a|Apply this file and every later file"
+      "a|Apply this file and every later empty file (still ask when tags exist)"
       "b|Begin apply now — write answers so far; ask remaining files later"
       "n|Skip this file"
       "q|Quit (abandon this batch's pending writes)"
@@ -1035,6 +1044,7 @@ scm_decide_file() {
           scm_print_selected "K = Keep existing tags for the rest of this run"
           ALWAYS_KEEP_EXISTING=1
           ALWAYS_APPLY=0
+          ALWAYS_APPLY_EMPTY=0
           KEPT=$((KEPT + 1))
           echo "$(scm_ts) Kept existing tags: ${f##*/}"
           echo "$(scm_ts) Will keep existing tags for later files; only fully empty files get ${SCM_CAMERA_LABEL}."
@@ -1053,18 +1063,30 @@ scm_decide_file() {
         scm_print_selected "K = Keep existing tags for the rest of this run"
         ALWAYS_KEEP_EXISTING=1
         ALWAYS_APPLY=0
+        ALWAYS_APPLY_EMPTY=0
         KEPT=$((KEPT + 1))
         echo "$(scm_ts) Kept existing tags: ${f##*/}"
         echo "$(scm_ts) Will keep existing tags for later files; only fully empty files get ${SCM_CAMERA_LABEL}."
         return 0
         ;;
       a)
-        scm_print_selected "a = Overwrite this and every later file that differs"
-        ALWAYS_APPLY=1
-        ALWAYS_KEEP_EXISTING=0
-        echo "$(scm_ts) Queued (overwrite): ${f##*/}"
-        scm_queue_write "$f" "$SCM_WANT_MAKE" "$SCM_WANT_MODEL" "$SCM_WANT_COMMENT" "overwrite"
-        echo "$(scm_ts) Will overwrite differing tags with ${SCM_CAMERA_LABEL} on every later file."
+        if (( has_existing )); then
+          scm_print_selected "a = Overwrite this and every later file that differs"
+          ALWAYS_APPLY=1
+          ALWAYS_APPLY_EMPTY=0
+          ALWAYS_KEEP_EXISTING=0
+          echo "$(scm_ts) Queued (overwrite): ${f##*/}"
+          scm_queue_write "$f" "$SCM_WANT_MAKE" "$SCM_WANT_MODEL" "$SCM_WANT_COMMENT" "overwrite"
+          echo "$(scm_ts) Will overwrite differing tags with ${SCM_CAMERA_LABEL} on every later file."
+        else
+          scm_print_selected "a = Apply this file and every later empty file"
+          ALWAYS_APPLY_EMPTY=1
+          ALWAYS_APPLY=0
+          ALWAYS_KEEP_EXISTING=0
+          echo "$(scm_ts) Queued (apply): ${f##*/}"
+          scm_queue_write "$f" "$SCM_WANT_MAKE" "$SCM_WANT_MODEL" "$SCM_WANT_COMMENT" "apply"
+          echo "$(scm_ts) Will apply ${SCM_CAMERA_LABEL} to every later empty file; still ask when tags already exist."
+        fi
         return 0
         ;;
       n)
@@ -1268,6 +1290,7 @@ RECURSIVE=0
 DRY_RUN=0
 VERBOSE=0
 ALWAYS_APPLY=0
+ALWAYS_APPLY_EMPTY=0
 ALWAYS_KEEP_EXISTING=0
 BATCH_SIZE=0
 BATCH_SIZE_CLI=""
