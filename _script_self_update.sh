@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261122.202500 - drop foreign CALLER_SCRIPT* too (screen left CALLER=screen-after; setup then sealed the wrong file)
 # v. 20261122.164000 - setup: never seal/watch a live path whose basename differs from this script (rename passed poisoned LIVE)
 # v. 20261122.163000 - clear inherited SCRIPT_SELF_* unless $0 is this run's seal file (fix screen env poisoning rename.sh)
 # v. 20261117.141000 - script_self_update_check_now: unthrottled live-path check
@@ -541,19 +542,26 @@ script_self_update_live_basename_of() {
   printf '%s\n' "$base"
 }
 
-# Seal re-exec exports SCRIPT_SELF_* so the same script can restore identity. Long-lived children
-# (e.g. bash inside `screen` started by screen-after-the-reboot.sh) inherit that env. Keep seal
-# state only when THIS process is actually running the seal temp file; otherwise drop it so the
-# next script seals/copies itself (never the parent's live path).
+# Seal re-exec exports SCRIPT_SELF_* / CALLER_SCRIPT* so the same script can restore identity.
+# Long-lived children (bash inside `screen` from screen-after-the-reboot.sh) inherit that env.
+# Keep seal state only when THIS process is actually running the seal temp file; otherwise drop
+# seal + foreign CALLER_* so the next script seals itself (never the parent's path).
 script_self_update_clear_foreign_seal() {
-  local this="${1:-${CALLER_SCRIPT:-${0:-}}}"
-  local this_base live_base seal_base
-
-  [[ -n "${SCRIPT_SELF_SEALED:-}${SCRIPT_SELF_LIVE_PATH:-}${SCRIPT_SELF_SEAL_TMP:-}" ]] || return 0
+  local this="${1:-${0:-}}"
+  local this_base live_base seal_base caller_base
 
   this_base="$(script_self_update_live_basename_of "$this")"
   live_base="$(script_self_update_live_basename_of "${SCRIPT_SELF_LIVE_PATH:-}")"
   seal_base="$(basename -- "${SCRIPT_SELF_SEAL_TMP:-}")"
+  caller_base="$(script_self_update_live_basename_of "${CALLER_SCRIPT:-}")"
+
+  # Drop inherited CALLER_SCRIPT from another script (screen left CALLER=screen-after-the-reboot).
+  if [[ -n "${CALLER_SCRIPT:-}" && -n "$caller_base" && -n "$this_base" && "$caller_base" != "$this_base" ]]; then
+    unset CALLER_SCRIPT CALLER_SCRIPT_BASENAME
+    caller_base=""
+  fi
+
+  [[ -n "${SCRIPT_SELF_SEALED:-}${SCRIPT_SELF_LIVE_PATH:-}${SCRIPT_SELF_SEAL_TMP:-}" ]] || return 0
 
   # Real sealed re-exec: $0 is the .deleteme.*.seal.* file and (if set) LIVE matches this script.
   if [[ -n "${SCRIPT_SELF_SEALED:-}" && -n "$seal_base" && "${0##*/}" == "$seal_base" ]]; then
@@ -564,6 +572,7 @@ script_self_update_clear_foreign_seal() {
 
   # Inherited from another script, or SEALED without running the seal file — start clean.
   unset SCRIPT_SELF_SEALED SCRIPT_SELF_LIVE_PATH SCRIPT_SELF_SEAL_TMP
+  unset CALLER_SCRIPT CALLER_SCRIPT_BASENAME
   SCRIPT_SELF_UPDATE_STATE=off
   SCRIPT_SELF_UPDATE_PATH=""
   SCRIPT_SELF_UPDATE_FP=""
@@ -573,13 +582,21 @@ script_self_update_clear_foreign_seal() {
 # init live path → seal (exec, no return) → after re-entry: init + watch trap + seal cleanup.
 script_self_update_setup() {
   local live="${1:-}"
-  local this this_base live_arg_base
+  local this this_base live_arg_base caller_base
 
-  this="${CALLER_SCRIPT:-${0:-}}"
+  # Identity is $0 (this process), not inherited CALLER_SCRIPT from a parent shell.
+  this="${0:-}"
+  this_base="$(script_self_update_live_basename_of "$this")"
+  caller_base="$(script_self_update_live_basename_of "${CALLER_SCRIPT:-}")"
+  if [[ -n "${CALLER_SCRIPT:-}" && -n "$caller_base" && -n "$this_base" && "$caller_base" == "$this_base" ]]; then
+    this="$CALLER_SCRIPT"
+    this_base="$caller_base"
+  fi
+
   script_self_update_clear_foreign_seal "$this"
 
-  # Callers (rename.sh) may pass a baked-in SCRIPT_SELF_LIVE_PATH from a parent (e.g. screen).
-  # After clearing foreign seal, never seal/watch a different script's path — use this process.
+  # Recompute after clear (CALLER_* / SCRIPT_SELF_* may have been dropped).
+  this="${CALLER_SCRIPT:-${0:-}}"
   this_base="$(script_self_update_live_basename_of "$this")"
   live_arg_base="$(script_self_update_live_basename_of "${live:-}")"
   if [[ -z "$live" || ( -n "$this_base" && -n "$live_arg_base" && "$this_base" != "$live_arg_base" ) ]]; then

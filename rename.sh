@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261122.202500 - also drop inherited CALLER_SCRIPT* from screen-after-the-reboot (seal still picked wrong live path)
 # v. 20261122.164000 - ignore inherited SCRIPT_SELF_LIVE_PATH from another script (screen-after-the-reboot poisoned --use-db)
 # v. 20261122.092100 - rename prompt: [w] skip this directory for the rest of this run (no more prompts here)
 # v. 20261122.090500 - rename prompt: [i] No for this directory (opposite of [d] Yes for this directory)
@@ -764,6 +765,7 @@ if [[ -n "${SCRIPT_SELF_SEALED:-}" && -n "${SCRIPT_SELF_LIVE_PATH:-}" && -n "${S
     _rename_live="${SCRIPT_SELF_LIVE_PATH}"
 else
     unset SCRIPT_SELF_SEALED SCRIPT_SELF_LIVE_PATH SCRIPT_SELF_SEAL_TMP 2>/dev/null || true
+    unset CALLER_SCRIPT CALLER_SCRIPT_BASENAME 2>/dev/null || true
     _rename_live="$_rename_src"
 fi
 _RENAME_SELF_UPDATE_HELPER="$(cd "$(dirname -- "${_rename_live}")" && pwd -P)/_script_self_update.sh"
