@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261122.090500 - rename prompt: [i] No for this directory (opposite of [d] Yes for this directory)
 # v. 20261117.154700 - SQLite warmup shortfall: auto-continue tiny misses; ask only if large
 # v. 20261116.160000 - interactive multi-choice prompts use Up/Down arrow menus
 # v. 20261115.200000 - SUMMARY: Family-A chrome + Script/Version at top
@@ -18673,6 +18674,8 @@ AUTO_RECHECK_RENAME_DIR=""
 AUTO_RECHECK_RENAME_SESSION=no
 rename_all=no
 AUTO_RENAME_DIR=""
+# When set to dirname of a path: rename prompts auto-skip (like [n]) for every further file in that directory.
+AUTO_SKIP_DIR=""
 AUTO_RENAME_SIMILAR_DIR=""
 AUTO_RENAME_SIMILAR_NEED_USCORE=no
 # When set to realpath of a directory: collision prompts auto-apply _OTHER (like [R]) for every source file in that directory until cleared.
@@ -19037,6 +19040,13 @@ auto_yes_current_dir_matches() {
     [[ -n "$AUTO_RENAME_DIR" && "$path_dir" == "$AUTO_RENAME_DIR" ]]
 }
 
+auto_skip_current_dir_matches() {
+    local path="$1"
+    local path_dir
+    path_dir="$(dirname -- "$path")"
+    [[ -n "$AUTO_SKIP_DIR" && "$path_dir" == "$AUTO_SKIP_DIR" ]]
+}
+
 checksum_group_auto_yes_dir_matches() {
     local path="$1"
     local path_dir
@@ -19202,6 +19212,7 @@ print_rename_prompt_menu() {
     menu_items+=("m|Rename by editing target filename")
     menu_items+=("a|All remaining")
     menu_items+=("d|Yes for this directory")
+    menu_items+=("i|No for this directory")
     if [[ -n "$path" && -f "$path" ]]; then
         menu_items+=("s|Yes for similar names in this directory (all extensions here; leading _ only if this filename starts with _)")
     fi
@@ -21388,6 +21399,20 @@ for f in "${ordered_paths[@]}"; do
         fi
     fi
 
+    if auto_skip_current_dir_matches "$f"; then
+        # Still prompt for torrent .URL / thumbs.db no-ops (delete options); skip rename prompts only.
+        if ! is_torrent_url_file "$f" && ! is_thumbs_db_file "$f"; then
+            if [[ -n "$nef_xmp_buddy" ]]; then
+                ((files_skipped+=2))
+                processed["$nef_xmp_buddy"]=1
+            else
+                ((++files_skipped))
+            fi
+            vlog "Per-directory auto-skip: skipping '$f' (dir='$AUTO_SKIP_DIR')"
+            continue
+        fi
+    fi
+
     if [[ -z "$nef_xmp_buddy" ]] && gopro_auto_rename_lone_part_strip_matches "$f" "$new"; then
         perform_plain_or_nef_xmp_pair "GoPro lone _part_XX auto-yes" || break
         continue
@@ -21695,6 +21720,7 @@ for f in "${ordered_paths[@]}"; do
                 rename_all=yes
                 similar_rename_clear
                 AUTO_RENAME_DIR=""
+                AUTO_SKIP_DIR=""
                 AUTO_COLLISION_OTHER_DIR=""
                 AUTO_COLLISION_OTHER_SESSION=no
                 AUTO_COLLISION_OVERWRITE_DIR=""
@@ -21713,6 +21739,7 @@ for f in "${ordered_paths[@]}"; do
             ;;
         d|D)
             similar_rename_clear
+            AUTO_SKIP_DIR=""
             if [[ -n "$torrent_url_noop" || -n "$thumbs_db_noop" ]]; then
                 AUTO_RENAME_DIR="$(dirname -- "$f")"
                 vlog "Per-directory auto-yes enabled for '$AUTO_RENAME_DIR' (no rename for identical special file)"
@@ -21721,6 +21748,23 @@ for f in "${ordered_paths[@]}"; do
                 AUTO_RENAME_DIR="$(dirname -- "$f")"
                 vlog "Per-directory auto-yes enabled for '$AUTO_RENAME_DIR'"
                 perform_plain_or_nef_xmp_pair "per-directory auto-yes (prompt)" || break
+            fi
+            ;;
+        i|I)
+            similar_rename_clear
+            AUTO_RENAME_DIR=""
+            AUTO_SKIP_DIR="$(dirname -- "$f")"
+            vlog "Per-directory auto-skip enabled for '$AUTO_SKIP_DIR'"
+            if [[ -n "$nef_xmp_buddy" ]]; then
+                ((files_skipped+=2))
+                processed["$nef_xmp_buddy"]=1
+            else
+                ((++files_skipped))
+                if [[ -n "$thumbs_db_noop" || -n "$torrent_url_noop" ]]; then
+                    db_backfill_missing_hashes_for_existing_file "$f" || true
+                    db_mark_checked "$f" "plain" "checked"
+                    processed["$f"]=1
+                fi
             fi
             ;;
         s|S)
@@ -21734,6 +21778,7 @@ for f in "${ordered_paths[@]}"; do
                 fi
             else
                 AUTO_RENAME_DIR=""
+                AUTO_SKIP_DIR=""
                 AUTO_COLLISION_OTHER_DIR=""
                 AUTO_COLLISION_OTHER_SESSION=no
                 AUTO_COLLISION_OVERWRITE_DIR=""
