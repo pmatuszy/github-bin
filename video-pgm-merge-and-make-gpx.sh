@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261122.204500 - Contour-style chain also for rename labelled clips (e.g. _-_kgp_-_…); same label + start+duration
 # v. 20261120.103000 - Contour chain: allow links across midnight (epoch delta, not same calendar day in the name)
 # v. 20261120.102000 - standalone gap list: fixed-width days/hours/minutes/seconds columns (e.g. " 5d  0h 47m 05s")
 # v. 20261120.101000 - standalone gap list: "(next file)" names aligned in one column
@@ -513,11 +514,12 @@ Merge behaviour:
     label, or share one start time with a trailing chapter letter on the time (…_200322a_…)
     or camera token (…_GOPRO10_BLACKa.MP4). Letter runs a,b,c… on the same timestamp merge
     like part_01 chapters (any file size).
-  - Also groups Contour-style clips without a GoPro token on the same calendar day
-    when filename start + duration chains: YYYYMMDD_HHMMSS.mp4,
-    YYYYMMDD_HHMMSS_NVenc_….mp4, and rename.sh Contour+2
-    (YYYYMMDD_HHMMSS_-_-_Contour+2 / legacy Contour_2). File size is not used
-    (only a 10 MiB floor) — Contour chapters often differ a lot after re-encode.
+  - Also groups Contour-style clips without a GoPro token when filename start +
+    duration chains: YYYYMMDD_HHMMSS.mp4, YYYYMMDD_HHMMSS_NVenc_….mp4, rename.sh
+    Contour+2 (YYYYMMDD_HHMMSS_-_-_Contour+2 / legacy Contour_2), and other
+    rename.sh labelled names (e.g. …_-_kgp_-_do_Artura_…). Classic Contour
+    names may chain with each other; labelled rename clips only chain with the
+    same label suffix. File size is not used (only a 10 MiB floor).
     Contour stop slack: next start from 30s early to 12s after the previous end
     (confident). Gaps of 13–45s are Contour *suspect* review candidates (default
     Preview joins). A shorter clip does not chain into one at least twice as long (short
@@ -527,8 +529,8 @@ Merge behaviour:
     the half-merge. Merge INPUT lines show the gap to the next file on the same
     line. Contour groups merge with ffmpeg concat (-c copy), not mp4_merge. If
     picture matches but audio/time_base differ, offer remux (video copy + AAC +
-    unified time_base) then concat. Output:
-    YYYYMMDD_HHMMSS_Contour_concat_parts_01-NN.mp4.
+    unified time_base) then concat. Output: YYYYMMDD_HHMMSS_Contour_concat_parts_01-NN.mp4
+    (classic) or …_-_-_<label>_concat_parts_01-NN.mp4 (same-label rename).
   - Also groups 70mai-style clips NOYYYYMMDD-HHMMSS-NNNNNNX.MP4 and the same
     name starting with EV (same camera letter) into a continuous journey: ordered
     by filename time, sequence number increases by 1, and the filename start times
@@ -5736,7 +5738,50 @@ contour_basename_parse() {
     CONTOUR_TS_TIME="${BASH_REMATCH[2]}"
     return 0
   fi
+  # Other rename.sh labelled clips (e.g. …_-_kgp_-_do_Artura_…): same start+duration chain as
+  # Contour, but only with an identical label suffix (contour_chain_session_id) — not mixed with
+  # Contour/bare. GoPro / _part_ / 70mai / concat already returned above.
+  if [[ "$base" =~ ^([0-9]{8})_([0-9]{6})_.+\.[mM][pP]4$ ]]; then
+    CONTOUR_TS_DATE="${BASH_REMATCH[1]}"
+    CONTOUR_TS_TIME="${BASH_REMATCH[2]}"
+    return 0
+  fi
   return 1
+}
+
+# Session id for Contour-style chaining: classic Contour names share "contour"; rename labels
+# use the full suffix after YYYYMMDD_HHMMSS so …_-_-_kgp_-_foo only joins the same label.
+contour_chain_session_id_from_basename() {
+  local base="$1"
+  contour_link_basename_parse "$base" || return 1
+  if [[ "$base" =~ ^[0-9]{8}_[0-9]{6}\.[mM][pP]4$ ]]; then
+    printf 'contour\n'
+    return 0
+  fi
+  if [[ "$base" =~ ^[0-9]{8}_[0-9]{6}_NVenc_ ]]; then
+    printf 'contour\n'
+    return 0
+  fi
+  if [[ "$base" =~ ^[0-9]{8}_[0-9]{6}_(-__-_|-_-_)[Cc]ontour(\+2|_2|[Cc]ontour\+2|[Cc]ontour2)?\.[mM][pP]4$ ]]; then
+    printf 'contour\n'
+    return 0
+  fi
+  if [[ "$base" =~ ^[0-9]{8}_[0-9]{6}_Contour_concat_parts_[0-9]{2}-[0-9]{2}(_Proxy)?\.[mM][pP]4$ ]]; then
+    printf 'contour\n'
+    return 0
+  fi
+  if [[ "$base" =~ ^[0-9]{8}_[0-9]{6}(_.+)\.[mM][pP]4$ ]]; then
+    printf 'label:%s\n' "${BASH_REMATCH[1]}"
+    return 0
+  fi
+  return 1
+}
+
+contour_chain_sessions_compatible() {
+  local a b
+  a=$(contour_chain_session_id_from_basename "${1##*/}" 2>/dev/null) || return 1
+  b=$(contour_chain_session_id_from_basename "${2##*/}" 2>/dev/null) || return 1
+  [[ "$a" == "$b" ]]
 }
 
 # Contour chapter OR Contour merge output (…_Contour_concat_parts_AA-BB.mp4).
@@ -5830,6 +5875,7 @@ contour_chapter_duration_allows_link() {
 contour_chapter_timestamps_follow() {
   local prev_f="$1" next_f="$2"
   local delta tol max_stop
+  contour_chain_sessions_compatible "$prev_f" "$next_f" || return 1
   delta=$(contour_chapter_time_delta "$prev_f" "$next_f" 2>/dev/null) || return 1
   contour_chapter_duration_allows_link "$prev_f" "$next_f" || return 1
   tol="${PGM_CONTOUR_TIME_TOLERANCE_SEC:-30}"
@@ -5843,6 +5889,7 @@ contour_chapter_timestamps_follow() {
 contour_chapter_timestamps_suspect_link() {
   local prev_f="$1" next_f="$2"
   local delta tol max_stop suspect_max
+  contour_chain_sessions_compatible "$prev_f" "$next_f" || return 1
   delta=$(contour_chapter_time_delta "$prev_f" "$next_f" 2>/dev/null) || return 1
   contour_chapter_duration_allows_link "$prev_f" "$next_f" || return 1
   tol="${PGM_CONTOUR_TIME_TOLERANCE_SEC:-30}"
@@ -5859,6 +5906,7 @@ contour_chapter_timestamps_suspect_link() {
 contour_chapter_timestamps_within_suspect_ceiling() {
   local prev_f="$1" next_f="$2"
   local delta tol suspect_max
+  contour_chain_sessions_compatible "$prev_f" "$next_f" || return 1
   delta=$(contour_chapter_time_delta "$prev_f" "$next_f" 2>/dev/null) || return 1
   contour_chapter_duration_allows_link "$prev_f" "$next_f" || return 1
   tol="${PGM_CONTOUR_TIME_TOLERANCE_SEC:-30}"
@@ -5967,14 +6015,21 @@ contour_print_suspect_review() {
 
 contour_group_output_file() {
   local -a files=("$@")
-  local fb date1 t1 dir out
+  local fb date1 t1 dir out sid stem_pref
   fb="${files[0]##*/}"
   contour_link_basename_parse "$fb" || return 1
   date1="$CONTOUR_TS_DATE" t1="$CONTOUR_TS_TIME"
   (( ${#files[@]} >= 1 )) || return 1
   dir="$(dirname -- "${files[0]}")"
-  # Extend an existing Contour concat_parts range when inputs already include one.
-  out="$(pgm_merge_concat_parts_output_path "$dir" "${date1}_${t1}_Contour" "" "${files[@]}")" || return 1
+  sid=$(contour_chain_session_id_from_basename "$fb" 2>/dev/null) || sid=contour
+  if [[ "$sid" == contour ]]; then
+    stem_pref="${date1}_${t1}_Contour"
+  else
+    # Keep rename label in the output name (…_-_-_kgp_-_…_concat_parts_01-NN.mp4).
+    stem_pref="$(force_merge_strip_concat_stem "${fb%.*}")"
+  fi
+  # Extend an existing Contour/label concat_parts range when inputs already include one.
+  out="$(pgm_merge_concat_parts_output_path "$dir" "$stem_pref" "" "${files[@]}")" || return 1
   printf '%s\n' "$out"
 }
 
@@ -8071,7 +8126,7 @@ print_group_plan() {
     done
   fi
   if (( contour_groups > 0 )); then
-    echo "Merge candidates (Contour bare/_NVenc_/Contour+2; start+duration chain ≤${PGM_CONTOUR_TIME_MAX_STOP_SEC:-12}s after chapter end; short↛long ratio ${PGM_CONTOUR_SHORT_LEAD_RATIO:-0.5}; size ignored aside from ${PGM_CONTOUR_MIN_BYTES:-10485760} B floor):"
+    echo "Merge candidates (Contour bare/_NVenc_/Contour+2, or same rename label e.g. _-_kgp_-_…; start+duration chain ≤${PGM_CONTOUR_TIME_MAX_STOP_SEC:-12}s after chapter end; short↛long ratio ${PGM_CONTOUR_SHORT_LEAD_RATIO:-0.5}; size ignored aside from ${PGM_CONTOUR_MIN_BYTES:-10485760} B floor):"
     gidx=0
     for blob in "${GROUP_BLOBS[@]}"; do
       group_files_to_array "$blob" files
@@ -8079,12 +8134,15 @@ print_group_plan() {
       group_is_contour_size_split "${files[@]}" || continue
       (( gidx++ )) || true
       out_name=$(group_output_file "${files[@]}")
+      local contour_kind="Contour" sid=""
+      sid=$(contour_chain_session_id_from_basename "${files[0]##*/}" 2>/dev/null) || sid=contour
+      [[ "$sid" == contour ]] || contour_kind="same-label"
       if [[ -e "$out_name" ]]; then
-        printf '  [group %d/%d] %d clips (Contour) → %s  (already merged)\n' \
-          "$gidx" "$contour_groups" "${#files[@]}" "$out_name"
+        printf '  [group %d/%d] %d clips (%s) → %s  (already merged)\n' \
+          "$gidx" "$contour_groups" "${#files[@]}" "$contour_kind" "$out_name"
       else
-        printf '  [group %d/%d] %d clips (Contour) → %s\n' \
-          "$gidx" "$contour_groups" "${#files[@]}" "$out_name"
+        printf '  [group %d/%d] %d clips (%s) → %s\n' \
+          "$gidx" "$contour_groups" "${#files[@]}" "$contour_kind" "$out_name"
       fi
       print_chapter_file_lines_aligned '      ' "${files[@]}"
       print_chapter_input_total_aligned '      ' "${#files[@]}"
@@ -8236,7 +8294,7 @@ print_group_plan() {
         printf '%-*s   %s\n' "$sa_w" "$base" "${sa_gap_txts[sa_i]}"
       fi
     done
-    echo "      Gap (days d, hours h, minutes m, seconds s) = start of the next clip minus the end of this clip; a leading - means they overlap. Contour clips chain when the gap is within ${PGM_CONTOUR_TIME_MAX_STOP_SEC:-12} s (up to ${PGM_CONTOUR_TIME_SUSPECT_MAX_STOP_SEC:-45} s is offered for review)."
+    echo "      Gap (days d, hours h, minutes m, seconds s) = start of the next clip minus the end of this clip; a leading - means they overlap. Contour / same rename label clips chain when the gap is within ${PGM_CONTOUR_TIME_MAX_STOP_SEC:-12} s (up to ${PGM_CONTOUR_TIME_SUSPECT_MAX_STOP_SEC:-45} s is offered for review)."
     echo
   fi
   print_orphan_concat_section "${all_mp4[@]}"
