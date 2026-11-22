@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261122.205000 - small start+duration gap → merge candidate (any Contour-parseable labels; fallback for other clips)
 # v. 20261122.204500 - Contour-style chain also for rename labelled clips (e.g. _-_kgp_-_…); same label + start+duration
 # v. 20261120.103000 - Contour chain: allow links across midnight (epoch delta, not same calendar day in the name)
 # v. 20261120.102000 - standalone gap list: fixed-width days/hours/minutes/seconds columns (e.g. " 5d  0h 47m 05s")
@@ -517,20 +518,19 @@ Merge behaviour:
   - Also groups Contour-style clips without a GoPro token when filename start +
     duration chains: YYYYMMDD_HHMMSS.mp4, YYYYMMDD_HHMMSS_NVenc_….mp4, rename.sh
     Contour+2 (YYYYMMDD_HHMMSS_-_-_Contour+2 / legacy Contour_2), and other
-    rename.sh labelled names (e.g. …_-_kgp_-_do_Artura_…). Classic Contour
-    names may chain with each other; labelled rename clips only chain with the
-    same label suffix. File size is not used (only a 10 MiB floor).
-    Contour stop slack: next start from 30s early to 12s after the previous end
-    (confident). Gaps of 13–45s are Contour *suspect* review candidates (default
-    Preview joins). A shorter clip does not chain into one at least twice as long (short
-    must not lead a much longer chapter). Existing Contour half-merges
+    rename.sh labelled names (e.g. …_-_kgp_-_do_Artura_…).     A small start+duration gap is enough to consider a pair (labels need not match).
+    File size is not used (only a 10 MiB floor). Contour stop slack: next start from
+    30s early to 12s after the previous end (confident). Gaps of 13–45s are *suspect*
+    review candidates (default Preview joins). Other non-Contour singles with the same
+    small gaps are also offered. A shorter clip does not chain into one at least twice
+    as long (short must not lead a much longer chapter). Existing Contour half-merges
     (…_Contour_concat_parts_AA-BB.mp4) can chain with later Contour chapters; the
     new output extends the part range (01-02 + next → 01-03) instead of replacing
     the half-merge. Merge INPUT lines show the gap to the next file on the same
     line. Contour groups merge with ffmpeg concat (-c copy), not mp4_merge. If
     picture matches but audio/time_base differ, offer remux (video copy + AAC +
     unified time_base) then concat. Output: YYYYMMDD_HHMMSS_Contour_concat_parts_01-NN.mp4
-    (classic) or …_-_-_<label>_concat_parts_01-NN.mp4 (same-label rename).
+    (classic Contour) or first-clip stem _concat_parts_01-NN.mp4 (labelled / small-gap).
   - Also groups 70mai-style clips NOYYYYMMDD-HHMMSS-NNNNNNX.MP4 and the same
     name starting with EV (same camera letter) into a continuous journey: ordered
     by filename time, sequence number increases by 1, and the filename start times
@@ -5739,8 +5739,8 @@ contour_basename_parse() {
     return 0
   fi
   # Other rename.sh labelled clips (e.g. …_-_kgp_-_do_Artura_…): same start+duration chain as
-  # Contour, but only with an identical label suffix (contour_chain_session_id) — not mixed with
-  # Contour/bare. GoPro / _part_ / 70mai / concat already returned above.
+  # Contour when the gap is small (label need not match). GoPro / _part_ / 70mai / concat
+  # already returned above.
   if [[ "$base" =~ ^([0-9]{8})_([0-9]{6})_.+\.[mM][pP]4$ ]]; then
     CONTOUR_TS_DATE="${BASH_REMATCH[1]}"
     CONTOUR_TS_TIME="${BASH_REMATCH[2]}"
@@ -5749,8 +5749,8 @@ contour_basename_parse() {
   return 1
 }
 
-# Session id for Contour-style chaining: classic Contour names share "contour"; rename labels
-# use the full suffix after YYYYMMDD_HHMMSS so …_-_-_kgp_-_foo only joins the same label.
+# Session id for Contour-style *output naming*: classic Contour → "contour"; rename labels use
+# the full suffix after YYYYMMDD_HHMMSS. Chaining itself is gap-based (labels may differ).
 contour_chain_session_id_from_basename() {
   local base="$1"
   contour_link_basename_parse "$base" || return 1
@@ -5872,10 +5872,10 @@ contour_chapter_duration_allows_link() {
 }
 
 # Confident Contour link: next may start TOLERANCE early … MAX_STOP after expected end.
+# Label/session is not required — a small gap alone is enough to consider the pair.
 contour_chapter_timestamps_follow() {
   local prev_f="$1" next_f="$2"
   local delta tol max_stop
-  contour_chain_sessions_compatible "$prev_f" "$next_f" || return 1
   delta=$(contour_chapter_time_delta "$prev_f" "$next_f" 2>/dev/null) || return 1
   contour_chapter_duration_allows_link "$prev_f" "$next_f" || return 1
   tol="${PGM_CONTOUR_TIME_TOLERANCE_SEC:-30}"
@@ -5889,7 +5889,6 @@ contour_chapter_timestamps_follow() {
 contour_chapter_timestamps_suspect_link() {
   local prev_f="$1" next_f="$2"
   local delta tol max_stop suspect_max
-  contour_chain_sessions_compatible "$prev_f" "$next_f" || return 1
   delta=$(contour_chapter_time_delta "$prev_f" "$next_f" 2>/dev/null) || return 1
   contour_chapter_duration_allows_link "$prev_f" "$next_f" || return 1
   tol="${PGM_CONTOUR_TIME_TOLERANCE_SEC:-30}"
@@ -5906,7 +5905,6 @@ contour_chapter_timestamps_suspect_link() {
 contour_chapter_timestamps_within_suspect_ceiling() {
   local prev_f="$1" next_f="$2"
   local delta tol suspect_max
-  contour_chain_sessions_compatible "$prev_f" "$next_f" || return 1
   delta=$(contour_chapter_time_delta "$prev_f" "$next_f" 2>/dev/null) || return 1
   contour_chapter_duration_allows_link "$prev_f" "$next_f" || return 1
   tol="${PGM_CONTOUR_TIME_TOLERANCE_SEC:-30}"
@@ -5914,6 +5912,102 @@ contour_chapter_timestamps_within_suspect_ceiling() {
   [[ "$tol" =~ ^[0-9]+$ ]] || tol=30
   [[ "$suspect_max" =~ ^[0-9]+$ ]] || suspect_max=45
   (( delta >= -tol && delta <= suspect_max ))
+}
+
+# Generic time chain (any basename): next_start − (prev_start + duration) within Contour stop slack.
+pgm_timestamps_follow_confident() {
+  local prev_f="$1" next_f="$2"
+  local delta tol max_stop
+  delta=$(pgm_clip_gap_to_next_sec "$prev_f" "$next_f" 2>/dev/null) || return 1
+  contour_chapter_duration_allows_link "$prev_f" "$next_f" || return 1
+  tol="${PGM_CONTOUR_TIME_TOLERANCE_SEC:-30}"
+  max_stop="${PGM_CONTOUR_TIME_MAX_STOP_SEC:-12}"
+  [[ "$tol" =~ ^[0-9]+$ ]] || tol=30
+  [[ "$max_stop" =~ ^[0-9]+$ ]] || max_stop=12
+  (( delta >= -tol && delta <= max_stop ))
+}
+
+pgm_timestamps_within_suspect_ceiling() {
+  local prev_f="$1" next_f="$2"
+  local delta tol suspect_max
+  delta=$(pgm_clip_gap_to_next_sec "$prev_f" "$next_f" 2>/dev/null) || return 1
+  contour_chapter_duration_allows_link "$prev_f" "$next_f" || return 1
+  tol="${PGM_CONTOUR_TIME_TOLERANCE_SEC:-30}"
+  suspect_max="${PGM_CONTOUR_TIME_SUSPECT_MAX_STOP_SEC:-45}"
+  [[ "$tol" =~ ^[0-9]+$ ]] || tol=30
+  [[ "$suspect_max" =~ ^[0-9]+$ ]] || suspect_max=45
+  (( delta >= -tol && delta <= suspect_max ))
+}
+
+pgm_timestamps_suspect_link() {
+  local prev_f="$1" next_f="$2"
+  local delta tol max_stop suspect_max
+  delta=$(pgm_clip_gap_to_next_sec "$prev_f" "$next_f" 2>/dev/null) || return 1
+  contour_chapter_duration_allows_link "$prev_f" "$next_f" || return 1
+  tol="${PGM_CONTOUR_TIME_TOLERANCE_SEC:-30}"
+  max_stop="${PGM_CONTOUR_TIME_MAX_STOP_SEC:-12}"
+  suspect_max="${PGM_CONTOUR_TIME_SUSPECT_MAX_STOP_SEC:-45}"
+  [[ "$tol" =~ ^[0-9]+$ ]] || tol=30
+  [[ "$max_stop" =~ ^[0-9]+$ ]] || max_stop=12
+  [[ "$suspect_max" =~ ^[0-9]+$ ]] || suspect_max=45
+  (( suspect_max > max_stop )) || return 1
+  (( delta > max_stop && delta <= suspect_max ))
+}
+
+# Eligible for generic small-gap chaining (not Contour-parseable — those use Contour builders).
+is_small_gap_chainable_segment() {
+  local f="$1" sz dur min_b base
+  base="${f##*/}"
+  is_concat_output_basename "$base" && return 1
+  contour_link_basename_parse "$base" 2>/dev/null && return 1
+  min_b="${PGM_CONTOUR_MIN_BYTES:-10485760}"
+  [[ "$min_b" =~ ^[0-9]+$ ]] || min_b=10485760
+  sz=$(file_size_bytes "$f")
+  pgm_size_bytes_lt "$sz" "$min_b" && return 1
+  pgm_hybrid_start_epoch "$f" >/dev/null 2>&1 || return 1
+  dur=$(ffprobe_duration_seconds "$f" 2>/dev/null) || dur=""
+  [[ -n "$dur" ]] || return 1
+  awk -v d="$dur" 'BEGIN { exit !(d+0 > 0) }'
+}
+
+small_gap_run_valid() {
+  local -a run=("$@")
+  local i n=${#run[@]}
+  (( n >= 2 )) || return 1
+  for (( i = 0; i < n; i++ )); do
+    is_small_gap_chainable_segment "${run[i]}" || return 1
+  done
+  for (( i = 0; i < n - 1; i++ )); do
+    pgm_timestamps_follow_confident "${run[i]}" "${run[i + 1]}" || return 1
+  done
+  return 0
+}
+
+small_gap_suspect_run_valid() {
+  local -a run=("$@")
+  local i n=${#run[@]} has_suspect=0
+  (( n >= 2 )) || return 1
+  small_gap_run_valid "${run[@]}" && return 1
+  for (( i = 0; i < n; i++ )); do
+    is_small_gap_chainable_segment "${run[i]}" || return 1
+  done
+  for (( i = 0; i < n - 1; i++ )); do
+    pgm_timestamps_within_suspect_ceiling "${run[i]}" "${run[i + 1]}" || return 1
+    if pgm_timestamps_suspect_link "${run[i]}" "${run[i + 1]}"; then
+      has_suspect=1
+    fi
+  done
+  (( has_suspect )) || return 1
+}
+
+group_is_small_gap_time_chain() {
+  local -a files=("$@")
+  (( ${#files[@]} >= 2 )) || return 1
+  group_is_contour_size_split "${files[@]}" 2>/dev/null && return 1
+  group_is_size_split "${files[@]}" 2>/dev/null && return 1
+  group_is_dashcam "${files[@]}" 2>/dev/null && return 1
+  group_is_raw_gopro "${files[@]}" 2>/dev/null && return 1
+  small_gap_run_valid "${files[@]}"
 }
 
 contour_run_valid() {
@@ -6336,6 +6430,154 @@ build_contour_suspect_groups() {
     done
     if contour_suspect_run_valid "${run[@]}"; then
       note=$(contour_suspect_gap_note "${run[@]}" 2>/dev/null) || note="suspect gap"
+      CONTOUR_SUSPECT_BLOBS+=("$(printf '%s\n' "${run[@]}")")
+      CONTOUR_SUSPECT_NOTES+=("$note")
+    fi
+  done
+  pgm_progress_end
+}
+
+# Remaining singles (not Contour-parseable): still offer merge when start+duration gap is small.
+build_small_gap_groups() {
+  local -a kept=() singles=() run=() new_groups=()
+  local blob files f i n
+
+  for blob in "${GROUP_BLOBS[@]}"; do
+    group_files_to_array "$blob" files
+    if (( ${#files[@]} >= 2 )); then
+      kept+=("$blob")
+      continue
+    fi
+    if is_small_gap_chainable_segment "${files[0]}"; then
+      singles+=("${files[0]}")
+    else
+      kept+=("${files[0]}")
+    fi
+  done
+
+  (( ${#singles[@]} >= 2 )) || {
+    GROUP_BLOBS=( "${kept[@]}" )
+    return 0
+  }
+
+  mapfile -t singles < <(
+    for f in "${singles[@]}"; do
+      e="$(pgm_hybrid_start_epoch "$f" 2>/dev/null)" || e=0
+      printf '%020d\t%s\n' "$e" "$f"
+    done | LC_ALL=C sort -t $'\t' -k1,1n -k2,2 | cut -f2-
+  )
+  n=${#singles[@]}
+  i=0
+  local last_prog=-1
+  while (( i < n )); do
+    if (( i != last_prog )); then
+      pgm_progress_update "Small-gap chain" "$((i + 1))" "$n" "${singles[i]}"
+      last_prog=$i
+    fi
+    if is_small_gap_chainable_segment "${singles[i]}"; then
+      run=("${singles[i]}")
+    else
+      kept+=("${singles[i]}")
+      (( i++ )) || true
+      continue
+    fi
+    (( i++ )) || true
+    while (( i < n )); do
+      f="${singles[i]}"
+      if (( i != last_prog )); then
+        pgm_progress_update "Small-gap chain" "$((i + 1))" "$n" "$f"
+        last_prog=$i
+      fi
+      if ! pgm_timestamps_follow_confident "${run[-1]}" "$f"; then
+        break
+      fi
+      if is_small_gap_chainable_segment "$f"; then
+        run+=("$f")
+        (( i++ )) || true
+        continue
+      fi
+      break
+    done
+    if small_gap_run_valid "${run[@]}"; then
+      new_groups+=("$(printf '%s\n' "${run[@]}")")
+    else
+      local part_path
+      for part_path in "${run[@]}"; do
+        kept+=("$part_path")
+      done
+    fi
+  done
+  pgm_progress_end
+
+  GROUP_BLOBS=( "${kept[@]}" "${new_groups[@]}" )
+}
+
+# Suspect-band small gaps among remaining non-Contour singles (review, like Contour suspect).
+build_small_gap_suspect_groups() {
+  local -a pool=() run=() files=()
+  local blob f i n note
+
+  for blob in "${GROUP_BLOBS[@]}"; do
+    group_files_to_array "$blob" files
+    if (( ${#files[@]} >= 2 )); then
+      if group_is_small_gap_time_chain "${files[@]}"; then
+        pool+=("${files[@]}")
+      fi
+      continue
+    fi
+    is_small_gap_chainable_segment "${files[0]}" || continue
+    pool+=("${files[0]}")
+  done
+
+  (( ${#pool[@]} >= 2 )) || return 0
+
+  mapfile -t pool < <(
+    for f in "${pool[@]}"; do
+      e="$(pgm_hybrid_start_epoch "$f" 2>/dev/null)" || e=0
+      printf '%020d\t%s\n' "$e" "$f"
+    done | LC_ALL=C sort -t $'\t' -k1,1n -k2,2 | cut -f2-
+  )
+  local -a uniq=()
+  local prev=""
+  for f in "${pool[@]}"; do
+    [[ "$f" == "$prev" ]] && continue
+    uniq+=("$f")
+    prev="$f"
+  done
+  pool=("${uniq[@]}")
+  n=${#pool[@]}
+  i=0
+  local last_prog=-1
+  while (( i < n )); do
+    if (( i != last_prog )); then
+      pgm_progress_update "Small-gap suspect" "$((i + 1))" "$n" "${pool[i]}"
+      last_prog=$i
+    fi
+    if is_small_gap_chainable_segment "${pool[i]}"; then
+      run=("${pool[i]}")
+    else
+      (( i++ )) || true
+      continue
+    fi
+    (( i++ )) || true
+    while (( i < n )); do
+      f="${pool[i]}"
+      if (( i != last_prog )); then
+        pgm_progress_update "Small-gap suspect" "$((i + 1))" "$n" "$f"
+        last_prog=$i
+      fi
+      if ! pgm_timestamps_within_suspect_ceiling "${run[-1]}" "$f"; then
+        break
+      fi
+      if is_small_gap_chainable_segment "$f"; then
+        run+=("$f")
+        (( i++ )) || true
+        continue
+      fi
+      break
+    done
+    if small_gap_suspect_run_valid "${run[@]}"; then
+      note="small-gap suspect"
       CONTOUR_SUSPECT_BLOBS+=("$(printf '%s\n' "${run[@]}")")
       CONTOUR_SUSPECT_NOTES+=("$note")
     fi
@@ -7939,10 +8181,14 @@ build_chapter_groups() {
   build_letter_chapter_groups
   # 5) ~4 GB / ~12 GB size-split chapters without letter / _part_XX names
   build_size_split_groups
-  # 6) Contour time-chain (bare / _NVenc_ / Contour+2; confident ≤12s; short↛long)
+  # 6) Contour time-chain (bare / _NVenc_ / Contour+2 / rename labels; confident ≤12s; short↛long)
   build_contour_size_split_groups
   # 6b) Contour suspect review runs (13–45s gaps; not auto-merged)
   build_contour_suspect_groups
+  # 6c) Other singles with a small start+duration gap (same Contour stop slack)
+  build_small_gap_groups
+  # 6d) Suspect-band gaps among those remaining non-Contour singles
+  build_small_gap_suspect_groups
   # 7) 70mai NO* and EV* continuous journeys (sequence +1; EV may start sooner than a minute)
   build_dashcam_journey_groups
   pgm_progress_end
@@ -8005,7 +8251,7 @@ pgm_clip_gap_to_next_sec() {
 
 print_group_plan() {
   local -a all_mp4=("$@")
-  local gidx=0 mergeable=0 size_split_groups=0 contour_groups=0 contour_suspect_groups=0 part_groups=0 raw_gopro_groups=0 dashcam_groups=0 standalone=0
+  local gidx=0 mergeable=0 size_split_groups=0 contour_groups=0 contour_suspect_groups=0 part_groups=0 raw_gopro_groups=0 dashcam_groups=0 small_gap_groups=0 standalone=0
   local -a files=()
   local f base part cam blob out_name is_ss note i
   local group_bytes=0 sz
@@ -8050,6 +8296,8 @@ print_group_plan() {
       (( contour_groups++ )) || true
     elif group_is_size_split "${files[@]}"; then
       (( size_split_groups++ )) || true
+    elif group_is_small_gap_time_chain "${files[@]}"; then
+      (( small_gap_groups++ )) || true
     else
       (( part_groups++ )) || true
     fi
@@ -8064,6 +8312,7 @@ print_group_plan() {
       group_is_dashcam "${files[@]}" && continue
       group_is_contour_size_split "${files[@]}" && continue
       group_is_size_split "${files[@]}" && continue
+      group_is_small_gap_time_chain "${files[@]}" && continue
       (( gidx++ )) || true
       out_name=$(group_output_file "${files[@]}")
       if [[ -e "$out_name" ]]; then
@@ -8126,7 +8375,7 @@ print_group_plan() {
     done
   fi
   if (( contour_groups > 0 )); then
-    echo "Merge candidates (Contour bare/_NVenc_/Contour+2, or same rename label e.g. _-_kgp_-_…; start+duration chain ≤${PGM_CONTOUR_TIME_MAX_STOP_SEC:-12}s after chapter end; short↛long ratio ${PGM_CONTOUR_SHORT_LEAD_RATIO:-0.5}; size ignored aside from ${PGM_CONTOUR_MIN_BYTES:-10485760} B floor):"
+    echo "Merge candidates (Contour bare/_NVenc_/Contour+2 / rename labels; small start+duration gap ≤${PGM_CONTOUR_TIME_MAX_STOP_SEC:-12}s after chapter end; short↛long ratio ${PGM_CONTOUR_SHORT_LEAD_RATIO:-0.5}; size ignored aside from ${PGM_CONTOUR_MIN_BYTES:-10485760} B floor):"
     gidx=0
     for blob in "${GROUP_BLOBS[@]}"; do
       group_files_to_array "$blob" files
@@ -8167,6 +8416,27 @@ print_group_plan() {
           "$gidx" "$contour_suspect_groups" "${#files[@]}" "$out_name"
       fi
       contour_print_suspect_review "${files[@]}"
+      print_chapter_file_lines_aligned '      ' "${files[@]}"
+      print_chapter_input_total_aligned '      ' "${#files[@]}"
+      echo
+    done
+  fi
+  if (( small_gap_groups > 0 )); then
+    echo "Merge candidates (small start+duration gap ≤${PGM_CONTOUR_TIME_MAX_STOP_SEC:-12}s; non-Contour names):"
+    gidx=0
+    for blob in "${GROUP_BLOBS[@]}"; do
+      group_files_to_array "$blob" files
+      (( ${#files[@]} < 2 )) && continue
+      group_is_small_gap_time_chain "${files[@]}" || continue
+      (( gidx++ )) || true
+      out_name=$(group_output_file "${files[@]}")
+      if [[ -e "$out_name" ]]; then
+        printf '  [group %d/%d] %d clips (small gap) → %s  (already merged)\n' \
+          "$gidx" "$small_gap_groups" "${#files[@]}" "$out_name"
+      else
+        printf '  [group %d/%d] %d clips (small gap) → %s\n' \
+          "$gidx" "$small_gap_groups" "${#files[@]}" "$out_name"
+      fi
       print_chapter_file_lines_aligned '      ' "${files[@]}"
       print_chapter_input_total_aligned '      ' "${#files[@]}"
       echo
@@ -8294,7 +8564,7 @@ print_group_plan() {
         printf '%-*s   %s\n' "$sa_w" "$base" "${sa_gap_txts[sa_i]}"
       fi
     done
-    echo "      Gap (days d, hours h, minutes m, seconds s) = start of the next clip minus the end of this clip; a leading - means they overlap. Contour / same rename label clips chain when the gap is within ${PGM_CONTOUR_TIME_MAX_STOP_SEC:-12} s (up to ${PGM_CONTOUR_TIME_SUSPECT_MAX_STOP_SEC:-45} s is offered for review)."
+    echo "      Gap (days d, hours h, minutes m, seconds s) = start of the next clip minus the end of this clip; a leading - means they overlap. Clips chain when the gap is within ${PGM_CONTOUR_TIME_MAX_STOP_SEC:-12} s (up to ${PGM_CONTOUR_TIME_SUSPECT_MAX_STOP_SEC:-45} s is offered for review)."
     echo
   fi
   print_orphan_concat_section "${all_mp4[@]}"
@@ -8304,6 +8574,7 @@ print_group_plan() {
   (( size_split_groups > 0 )) && breakdown+="${breakdown:+, }${size_split_groups} size-split"
   (( contour_groups > 0 )) && breakdown+="${breakdown:+, }${contour_groups} Contour"
   (( contour_suspect_groups > 0 )) && breakdown+="${breakdown:+, }${contour_suspect_groups} Contour suspect"
+  (( small_gap_groups > 0 )) && breakdown+="${breakdown:+, }${small_gap_groups} small-gap"
   (( dashcam_groups > 0 )) && breakdown+="${breakdown:+, }${dashcam_groups} 70mai journey"
   if [[ -n "$breakdown" ]]; then
     echo "$(pgm_ts) Summary: ${mergeable} merge group(s) (${breakdown}), ${standalone} standalone file(s), ${PGM_ORPHAN_CONCAT_COUNT} merged output(s) without input chapters."
@@ -8448,6 +8719,13 @@ group_output_file() {
   if (( ${#files[@]} >= 2 )) && { group_is_contour_size_split "${files[@]}" \
     || group_is_contour_suspect "${files[@]}"; }; then
     contour_group_output_file "${files[@]}" && return 0
+  fi
+  if (( ${#files[@]} >= 2 )) && group_is_small_gap_time_chain "${files[@]}"; then
+    local dir sg_stem sg_base
+    dir="$(dirname -- "${files[0]}")"
+    sg_base="${files[0]##*/}"
+    sg_stem="$(force_merge_strip_concat_stem "${sg_base%.*}")"
+    pgm_merge_concat_parts_output_path "$dir" "$sg_stem" "" "${files[@]}" && return 0
   fi
   if (( ${#files[@]} >= 2 )) && group_is_size_split "${files[@]}"; then
     size_split_group_output_file "${files[@]}" && return 0
