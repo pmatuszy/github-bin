@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261122.092100 - rename prompt: [w] skip this directory for the rest of this run (no more prompts here)
 # v. 20261122.090500 - rename prompt: [i] No for this directory (opposite of [d] Yes for this directory)
 # v. 20261117.154700 - SQLite warmup shortfall: auto-continue tiny misses; ask only if large
 # v. 20261116.160000 - interactive multi-choice prompts use Up/Down arrow menus
@@ -18676,6 +18677,8 @@ rename_all=no
 AUTO_RENAME_DIR=""
 # When set to dirname of a path: rename prompts auto-skip (like [n]) for every further file in that directory.
 AUTO_SKIP_DIR=""
+# When set to dirname of a path: skip every further entry in that directory with no prompts (renames, torrent, thumbs, …).
+AUTO_SKIP_ALL_DIR=""
 AUTO_RENAME_SIMILAR_DIR=""
 AUTO_RENAME_SIMILAR_NEED_USCORE=no
 # When set to realpath of a directory: collision prompts auto-apply _OTHER (like [R]) for every source file in that directory until cleared.
@@ -19047,6 +19050,13 @@ auto_skip_current_dir_matches() {
     [[ -n "$AUTO_SKIP_DIR" && "$path_dir" == "$AUTO_SKIP_DIR" ]]
 }
 
+auto_skip_all_current_dir_matches() {
+    local path="$1"
+    local path_dir
+    path_dir="$(dirname -- "$path")"
+    [[ -n "$AUTO_SKIP_ALL_DIR" && "$path_dir" == "$AUTO_SKIP_ALL_DIR" ]]
+}
+
 checksum_group_auto_yes_dir_matches() {
     local path="$1"
     local path_dir
@@ -19213,6 +19223,7 @@ print_rename_prompt_menu() {
     menu_items+=("a|All remaining")
     menu_items+=("d|Yes for this directory")
     menu_items+=("i|No for this directory")
+    menu_items+=("w|Skip this directory for the rest of this run (no more prompts here)")
     if [[ -n "$path" && -f "$path" ]]; then
         menu_items+=("s|Yes for similar names in this directory (all extensions here; leading _ only if this filename starts with _)")
     fi
@@ -21399,6 +21410,17 @@ for f in "${ordered_paths[@]}"; do
         fi
     fi
 
+    if auto_skip_all_current_dir_matches "$f"; then
+        if [[ -n "$nef_xmp_buddy" ]]; then
+            ((files_skipped+=2))
+            processed["$nef_xmp_buddy"]=1
+        else
+            ((++files_skipped))
+        fi
+        vlog "Per-directory skip-all: skipping '$f' (dir='$AUTO_SKIP_ALL_DIR')"
+        continue
+    fi
+
     if auto_skip_current_dir_matches "$f"; then
         # Still prompt for torrent .URL / thumbs.db no-ops (delete options); skip rename prompts only.
         if ! is_torrent_url_file "$f" && ! is_thumbs_db_file "$f"; then
@@ -21721,6 +21743,7 @@ for f in "${ordered_paths[@]}"; do
                 similar_rename_clear
                 AUTO_RENAME_DIR=""
                 AUTO_SKIP_DIR=""
+                AUTO_SKIP_ALL_DIR=""
                 AUTO_COLLISION_OTHER_DIR=""
                 AUTO_COLLISION_OTHER_SESSION=no
                 AUTO_COLLISION_OVERWRITE_DIR=""
@@ -21740,6 +21763,7 @@ for f in "${ordered_paths[@]}"; do
         d|D)
             similar_rename_clear
             AUTO_SKIP_DIR=""
+            AUTO_SKIP_ALL_DIR=""
             if [[ -n "$torrent_url_noop" || -n "$thumbs_db_noop" ]]; then
                 AUTO_RENAME_DIR="$(dirname -- "$f")"
                 vlog "Per-directory auto-yes enabled for '$AUTO_RENAME_DIR' (no rename for identical special file)"
@@ -21753,6 +21777,7 @@ for f in "${ordered_paths[@]}"; do
         i|I)
             similar_rename_clear
             AUTO_RENAME_DIR=""
+            AUTO_SKIP_ALL_DIR=""
             AUTO_SKIP_DIR="$(dirname -- "$f")"
             vlog "Per-directory auto-skip enabled for '$AUTO_SKIP_DIR'"
             if [[ -n "$nef_xmp_buddy" ]]; then
@@ -21767,6 +21792,19 @@ for f in "${ordered_paths[@]}"; do
                 fi
             fi
             ;;
+        w|W)
+            similar_rename_clear
+            AUTO_RENAME_DIR=""
+            AUTO_SKIP_DIR=""
+            AUTO_SKIP_ALL_DIR="$(dirname -- "$f")"
+            vlog "Per-directory skip-all enabled for '$AUTO_SKIP_ALL_DIR' (no more prompts in this directory)"
+            if [[ -n "$nef_xmp_buddy" ]]; then
+                ((files_skipped+=2))
+                processed["$nef_xmp_buddy"]=1
+            else
+                ((++files_skipped))
+            fi
+            ;;
         s|S)
             if [[ ! -f "$f" ]]; then
                 echo -e "${YELLOW}[S] applies only to regular files.${RESET}"
@@ -21779,6 +21817,7 @@ for f in "${ordered_paths[@]}"; do
             else
                 AUTO_RENAME_DIR=""
                 AUTO_SKIP_DIR=""
+                AUTO_SKIP_ALL_DIR=""
                 AUTO_COLLISION_OTHER_DIR=""
                 AUTO_COLLISION_OTHER_SESSION=no
                 AUTO_COLLISION_OVERWRITE_DIR=""
