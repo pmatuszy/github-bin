@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261122.163000 - clear inherited SCRIPT_SELF_* unless $0 is this run's seal file (fix screen env poisoning rename.sh)
 # v. 20261117.141000 - script_self_update_check_now: unthrottled live-path check
 # v. 20261117.084500 - ignore inherited SCRIPT_SELF_* seal env from a different parent script
 # v. 20261116.152500 - after [R]/[C]/[Q], drain leftover Enter from the tty so the next prompt is not auto-answered
@@ -232,6 +233,10 @@ script_self_update_seal_and_reexec() {
       else
         args+=( "$tmp" )
       fi
+    elif [[ ( "$a0" == env || "$a0" == */env ) && ${#args[@]} -ge 3 \
+        && ( "${args[1]-}" == bash || "${args[1]-}" == */bash || "${args[1]-}" == sh || "${args[1]-}" == */sh ) ]]; then
+      # #!/usr/bin/env bash → argv is env, bash, live-script, args…
+      args[2]="$tmp"
     else
       # Direct shebang exec: argv0 was the live script path.
       args[0]="$tmp"
@@ -535,37 +540,33 @@ script_self_update_live_basename_of() {
   printf '%s\n' "$base"
 }
 
-# Seal re-exec exports SCRIPT_SELF_* so the same script can restore identity. Child processes
-# inherit that env; if their caller is a different script, drop the parent's seal state.
+# Seal re-exec exports SCRIPT_SELF_* so the same script can restore identity. Long-lived children
+# (e.g. bash inside `screen` started by screen-after-the-reboot.sh) inherit that env. Keep seal
+# state only when THIS process is actually running the seal temp file; otherwise drop it so the
+# next script seals/copies itself (never the parent's live path).
 script_self_update_clear_foreign_seal() {
   local this="${1:-${CALLER_SCRIPT:-${0:-}}}"
-  local this_base live_base seal_base this_raw
+  local this_base live_base seal_base
 
-  [[ -n "${SCRIPT_SELF_SEALED:-}${SCRIPT_SELF_LIVE_PATH:-}" ]] || return 0
+  [[ -n "${SCRIPT_SELF_SEALED:-}${SCRIPT_SELF_LIVE_PATH:-}${SCRIPT_SELF_SEAL_TMP:-}" ]] || return 0
 
   this_base="$(script_self_update_live_basename_of "$this")"
-  live_base="$(basename -- "${SCRIPT_SELF_LIVE_PATH:-}")"
-  if [[ -n "$this_base" && -n "$live_base" && "$this_base" != "$live_base" ]]; then
-    unset SCRIPT_SELF_SEALED SCRIPT_SELF_LIVE_PATH SCRIPT_SELF_SEAL_TMP
-    SCRIPT_SELF_UPDATE_STATE=off
-    SCRIPT_SELF_UPDATE_PATH=""
-    SCRIPT_SELF_UPDATE_FP=""
-    SCRIPT_SELF_UPDATE_DEBUG_TRAP_INSTALLED=0
-    return 0
-  fi
+  live_base="$(script_self_update_live_basename_of "${SCRIPT_SELF_LIVE_PATH:-}")"
+  seal_base="$(basename -- "${SCRIPT_SELF_SEAL_TMP:-}")"
 
-  # SEALED set but we are not executing that seal file (inherited from parent only).
-  if [[ -n "${SCRIPT_SELF_SEALED:-}" && -n "${SCRIPT_SELF_SEAL_TMP:-}" ]]; then
-    seal_base="$(basename -- "${SCRIPT_SELF_SEAL_TMP}")"
-    this_raw="$(basename -- "$this")"
-    if [[ "$this_raw" != "$seal_base" && "${0##*/}" != "$seal_base" ]]; then
-      unset SCRIPT_SELF_SEALED SCRIPT_SELF_LIVE_PATH SCRIPT_SELF_SEAL_TMP
-      SCRIPT_SELF_UPDATE_STATE=off
-      SCRIPT_SELF_UPDATE_PATH=""
-      SCRIPT_SELF_UPDATE_FP=""
-      SCRIPT_SELF_UPDATE_DEBUG_TRAP_INSTALLED=0
+  # Real sealed re-exec: $0 is the .deleteme.*.seal.* file and (if set) LIVE matches this script.
+  if [[ -n "${SCRIPT_SELF_SEALED:-}" && -n "$seal_base" && "${0##*/}" == "$seal_base" ]]; then
+    if [[ -z "$live_base" || -z "$this_base" || "$live_base" == "$this_base" ]]; then
+      return 0
     fi
   fi
+
+  # Inherited from another script, or SEALED without running the seal file — start clean.
+  unset SCRIPT_SELF_SEALED SCRIPT_SELF_LIVE_PATH SCRIPT_SELF_SEAL_TMP
+  SCRIPT_SELF_UPDATE_STATE=off
+  SCRIPT_SELF_UPDATE_PATH=""
+  SCRIPT_SELF_UPDATE_FP=""
+  SCRIPT_SELF_UPDATE_DEBUG_TRAP_INSTALLED=0
 }
 
 # init live path → seal (exec, no return) → after re-entry: init + watch trap + seal cleanup.
