@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261122.164000 - setup: never seal/watch a live path whose basename differs from this script (rename passed poisoned LIVE)
 # v. 20261122.163000 - clear inherited SCRIPT_SELF_* unless $0 is this run's seal file (fix screen env poisoning rename.sh)
 # v. 20261117.141000 - script_self_update_check_now: unthrottled live-path check
 # v. 20261117.084500 - ignore inherited SCRIPT_SELF_* seal env from a different parent script
@@ -572,18 +573,17 @@ script_self_update_clear_foreign_seal() {
 # init live path → seal (exec, no return) → after re-entry: init + watch trap + seal cleanup.
 script_self_update_setup() {
   local live="${1:-}"
-  local caller_base live_arg_base
+  local this this_base live_arg_base
 
-  script_self_update_clear_foreign_seal "${CALLER_SCRIPT:-${0:-}}"
+  this="${CALLER_SCRIPT:-${0:-}}"
+  script_self_update_clear_foreign_seal "$this"
 
-  # Header used to pass "${SCRIPT_SELF_LIVE_PATH:-$CALLER_SCRIPT}"; that expands the parent's
-  # live path before we clear foreign seal. Prefer CALLER_SCRIPT when $1 is a different script.
-  if [[ -n "${CALLER_SCRIPT:-}" ]]; then
-    caller_base="$(script_self_update_live_basename_of "$CALLER_SCRIPT")"
-    live_arg_base="$(script_self_update_live_basename_of "${live:-}")"
-    if [[ -z "$live" || ( -n "$caller_base" && -n "$live_arg_base" && "$caller_base" != "$live_arg_base" ) ]]; then
-      live="$CALLER_SCRIPT"
-    fi
+  # Callers (rename.sh) may pass a baked-in SCRIPT_SELF_LIVE_PATH from a parent (e.g. screen).
+  # After clearing foreign seal, never seal/watch a different script's path — use this process.
+  this_base="$(script_self_update_live_basename_of "$this")"
+  live_arg_base="$(script_self_update_live_basename_of "${live:-}")"
+  if [[ -z "$live" || ( -n "$this_base" && -n "$live_arg_base" && "$this_base" != "$live_arg_base" ) ]]; then
+    live="$this"
   fi
 
   if [[ -n "${SCRIPT_SELF_SEALED:-}" ]]; then

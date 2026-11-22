@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# v. 20261122.164000 - ignore inherited SCRIPT_SELF_LIVE_PATH from another script (screen-after-the-reboot poisoned --use-db)
 # v. 20261122.092100 - rename prompt: [w] skip this directory for the rest of this run (no more prompts here)
 # v. 20261122.090500 - rename prompt: [i] No for this directory (opposite of [d] Yes for this directory)
 # v. 20261117.154700 - SQLite warmup shortfall: auto-continue tiny misses; ask only if large
@@ -747,17 +748,29 @@ SCRIPT_VERSION="$(
 
 # Seal to a temp copy, then watch the live bin/ path for overwrite (git pull + cp).
 # After seal, BASH_SOURCE may be .rename.sh.seal.XXXX — resolve helpers from the live path.
-if [[ -n "${SCRIPT_SELF_LIVE_PATH:-}" ]]; then
-    _RENAME_SELF_UPDATE_HELPER="$(cd "$(dirname -- "${SCRIPT_SELF_LIVE_PATH}")" && pwd -P)/_script_self_update.sh"
+# Do NOT trust inherited SCRIPT_SELF_LIVE_PATH unless this process is rename's own seal re-exec
+# (screen-after-the-reboot left LIVE=that script; trusting it re-exec'd reboot and rejected --use-db).
+_rename_src="$(readlink -f -- "${BASH_SOURCE[0]:-$0}" 2>/dev/null || printf '%s' "${BASH_SOURCE[0]:-$0}")"
+_rename_src_base="${_rename_src##*/}"
+case "$_rename_src_base" in
+    .deleteme.*.seal.*)
+        _rename_src_base="${_rename_src_base#.deleteme.}"
+        _rename_src_base="${_rename_src_base%.seal.*}"
+        ;;
+esac
+if [[ -n "${SCRIPT_SELF_SEALED:-}" && -n "${SCRIPT_SELF_LIVE_PATH:-}" && -n "${SCRIPT_SELF_SEAL_TMP:-}" \
+    && "${0##*/}" == "$(basename -- "${SCRIPT_SELF_SEAL_TMP}")" \
+    && "$(basename -- "${SCRIPT_SELF_LIVE_PATH}")" == "$_rename_src_base" ]]; then
     _rename_live="${SCRIPT_SELF_LIVE_PATH}"
 else
-    _rename_live="$(readlink -f -- "${BASH_SOURCE[0]:-$0}" 2>/dev/null || printf '%s' "${BASH_SOURCE[0]:-$0}")"
-    _RENAME_SELF_UPDATE_HELPER="$(cd "$(dirname -- "${_rename_live}")" && pwd -P)/_script_self_update.sh"
+    unset SCRIPT_SELF_SEALED SCRIPT_SELF_LIVE_PATH SCRIPT_SELF_SEAL_TMP 2>/dev/null || true
+    _rename_live="$_rename_src"
 fi
+_RENAME_SELF_UPDATE_HELPER="$(cd "$(dirname -- "${_rename_live}")" && pwd -P)/_script_self_update.sh"
 if [[ -f "${_RENAME_SELF_UPDATE_HELPER}" ]]; then
     # shellcheck source=/dev/null
     . "${_RENAME_SELF_UPDATE_HELPER}"
-    script_self_update_setup "${SCRIPT_SELF_LIVE_PATH:-$_rename_live}"
+    script_self_update_setup "$_rename_live"
 fi
 
 # Shared Up/Down arrow menu (script_arrow_menu from sibling _script_header.sh; same UX as video-pgm-timelapse).
