@@ -1,4 +1,5 @@
 #!/bin/bash
+# v. 20261123.154000 - after encode: copy Make/Model/Comment (and related) from source, not only time tags
 # v. 20261117.181200 - existing-output menu: already-encoded framing; names on [m]/[n]
 # v. 20261117.165300 - timestamps UX: not file naming; quiet apply when already chosen
 # v. 20261117.165000 - "Output dates" → "Output file dates" (timestamps on the encode)
@@ -184,7 +185,8 @@ Write a faster copy beside each video. A 10× copy of a two-hour drive is about
 twelve minutes. The original file is not changed. The copy is named
 stem_xN.mp4. When that name is already taken, the new file is
 stem_xN_YYYYMMDD-HHMMSS.mp4, using the time this encode starts. The file itself
-gets the source video's creation time and file time. If the source file name,
+gets the source video's creation time, file time, and camera Make/Model/Comment.
+If the source file name,
 filesystem time, and media CreateDate disagree by more than two minutes, the
 script asks which date to use (1/2/3…); the default is the oldest usable stamp
 (before 1990 ignored). The prompt spells out a numeric default, echoes Selected:,
@@ -1233,15 +1235,21 @@ tl_put_gps() {
   fi
 }
 
-# Give $2 the creation time and the file time of $1, including the dates stored in the video.
+# Give $2 the creation time, file time, and camera identity tags of $1.
+# ffmpeg re-encode drops QuickTime Make/Model (Comment sometimes survives); copy them
+# explicitly like video-pgm-merge-and-make-gpx.sh post-merge TagsFromFile.
 tl_stamp_from() {
   local src="$1" dest="$2" exif=""
   [[ -f "$src" && -f "$dest" && "$src" != "$dest" ]] || return 0
   if exif=$(tl_find_exiftool); then
-    "$exif" -overwrite_original -P -api QuickTimeUTC=1 \
+    "$exif" -overwrite_original -P -api QuickTimeUTC=1 -api largefilesupport=1 \
       -TagsFromFile "$src" \
       -time:all \
       -FileModifyDate \
+      -Make -Model -Comment -Software -Artist -Copyright \
+      -Keys:Make -Keys:Model \
+      -ItemList:Make -ItemList:Model \
+      -QuickTime:Make -QuickTime:Model -QuickTime:Comment \
       -- "$dest" >/dev/null 2>&1 || true
   fi
   if touch -r "$src" -- "$dest" 2>/dev/null; then
